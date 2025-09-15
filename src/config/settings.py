@@ -27,7 +27,7 @@ class Settings:
                 "accent_color": "#03dac6"
             },
             "aws": {
-                "default_region": "us-east-1",
+                "default_region": "sa-east-1",
                 "profile": "default"
             },
             "ui": {
