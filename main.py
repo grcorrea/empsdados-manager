@@ -5,6 +5,9 @@ import configparser
 import subprocess
 import sys
 import json
+import threading
+import time
+from datetime import datetime, timezone
 from pathlib import Path
 from botocore.exceptions import ClientError, NoCredentialsError, ProfileNotFound
 
@@ -136,6 +139,11 @@ class AWSApp:
             if hasattr(self, 'rt_dropdown'):
                 self.update_s3_path()
 
+            # Atualizar status do monitoring se a aba estiver carregada
+            if hasattr(self, 'monitoring_status'):
+                self.monitoring_status.value = "✅ Conectado - Clique em 'Atualizar' para carregar jobs"
+                self.monitoring_status.color = ft.Colors.GREEN
+
             return True
 
         except (NoCredentialsError, ClientError, Exception) as e:
@@ -155,6 +163,11 @@ class AWSApp:
             if hasattr(self, 'rt_dropdown'):
                 self.update_s3_path()
 
+            # Atualizar status do monitoring se a aba estiver carregada
+            if hasattr(self, 'monitoring_status'):
+                self.monitoring_status.value = "Faça login primeiro para visualizar jobs"
+                self.monitoring_status.color = ft.Colors.GREY_400
+
             return False
         finally:
             if hasattr(self, 'page'):
@@ -171,6 +184,9 @@ class AWSApp:
         # S3 Tab Content
         self.s3_tab = self.create_s3_tab()
 
+        # Monitoring Tab Content
+        self.monitoring_tab = self.create_monitoring_tab()
+
         # Create Tabs
         tabs = ft.Tabs(
             selected_index=0,
@@ -178,6 +194,7 @@ class AWSApp:
             tabs=[
                 ft.Tab(text="Login", content=self.login_tab),
                 ft.Tab(text="S3", content=self.s3_tab),
+                ft.Tab(text="Monitoring", content=self.monitoring_tab),
             ],
             expand=True,
         )
@@ -375,6 +392,170 @@ class AWSApp:
             expand=True
         )
 
+    def create_monitoring_tab(self):
+        # Filtro de busca
+        self.job_filter = ft.TextField(
+            label="Filtrar jobs (separe por vírgula)",
+            width=300,
+            on_change=self.filter_jobs
+        )
+
+        # Filtro por status
+        self.status_filter = ft.Dropdown(
+            label="Status",
+            options=[
+                ft.dropdown.Option("TODOS"),
+                ft.dropdown.Option("SUCCEEDED"),
+                ft.dropdown.Option("FAILED"),
+                ft.dropdown.Option("RUNNING"),
+                ft.dropdown.Option("NEVER_RUN"),
+            ],
+            value="TODOS",
+            width=150,
+            on_change=self.filter_jobs
+        )
+
+        # Controles de atualização automática
+        self.auto_refresh_enabled = ft.Checkbox(
+            label="Atualização automática",
+            value=False,
+            on_change=self.toggle_auto_refresh
+        )
+
+        self.refresh_hours = ft.TextField(
+            label="Horas",
+            value="0",
+            width=80,
+            text_align=ft.TextAlign.CENTER,
+            on_change=self.update_refresh_interval
+        )
+
+        self.refresh_minutes = ft.TextField(
+            label="Min",
+            value="1",
+            width=80,
+            text_align=ft.TextAlign.CENTER,
+            on_change=self.update_refresh_interval
+        )
+
+        self.refresh_seconds = ft.TextField(
+            label="Seg",
+            value="0",
+            width=80,
+            text_align=ft.TextAlign.CENTER,
+            on_change=self.update_refresh_interval
+        )
+
+        # Botão de atualização manual
+        self.refresh_button = ft.ElevatedButton(
+            "🔄 Atualizar",
+            on_click=self.refresh_jobs,
+            width=120
+        )
+
+        # Progress e status
+        self.monitoring_progress = ft.ProgressRing(visible=False)
+        self.monitoring_status = ft.Text(
+            "Faça login primeiro para visualizar jobs",
+            size=14,
+            color=ft.Colors.GREY_400
+        )
+
+        # Última atualização
+        self.last_update_text = ft.Text(
+            "",
+            size=12,
+            color=ft.Colors.GREY_500
+        )
+
+        # Tabela de jobs
+        self.jobs_table = ft.DataTable(
+            columns=[
+                ft.DataColumn(ft.Text("Job Name", weight=ft.FontWeight.BOLD)),
+                ft.DataColumn(ft.Text("Status", weight=ft.FontWeight.BOLD)),
+                ft.DataColumn(ft.Text("Última Execução", weight=ft.FontWeight.BOLD)),
+                ft.DataColumn(ft.Text("Duração", weight=ft.FontWeight.BOLD)),
+            ],
+            rows=[],
+            expand=True
+        )
+
+        # Container scrollável para a tabela
+        self.table_container = ft.Container(
+            content=self.jobs_table,
+            expand=True,
+            border=ft.border.all(1, ft.Colors.GREY_700),
+            border_radius=5,
+            padding=10
+        )
+
+        # Inicializar variáveis de controle
+        self.auto_refresh_timer = None
+        self.refresh_interval = 60  # 1 minuto em segundos
+        self.all_jobs = []
+        self.filtered_jobs = []
+
+        return ft.Container(
+            content=ft.Column([
+                ft.Container(
+                    ft.Text(
+                        "Monitoring AWS Glue Jobs",
+                        size=20,
+                        weight=ft.FontWeight.BOLD,
+                        color=ft.Colors.WHITE
+                    ),
+                    alignment=ft.alignment.center,
+                    padding=10
+                ),
+                ft.Divider(),
+
+                # Controles superiores
+                ft.Row([
+                    self.job_filter,
+                    ft.Container(width=10),
+                    self.status_filter,
+                    ft.Container(width=15),
+                    self.refresh_button,
+                    self.monitoring_progress
+                ], alignment=ft.MainAxisAlignment.START),
+
+                ft.Container(height=5),
+
+                # Controles de atualização automática
+                ft.Row([
+                    self.auto_refresh_enabled,
+                    ft.Container(width=15),
+                    ft.Text("Intervalo:", size=14),
+                    self.refresh_hours,
+                    ft.Text(":", size=14),
+                    self.refresh_minutes,
+                    ft.Text(":", size=14),
+                    self.refresh_seconds,
+                ], alignment=ft.MainAxisAlignment.START),
+
+                ft.Container(height=5),
+
+                # Status e última atualização
+                ft.Row([
+                    self.monitoring_status,
+                    ft.Container(expand=True),
+                    self.last_update_text
+                ], alignment=ft.MainAxisAlignment.SPACE_BETWEEN),
+
+                ft.Container(height=5),
+
+                # Tabela
+                ft.Text("Jobs do AWS Glue:", size=14, weight=ft.FontWeight.BOLD),
+                self.table_container,
+            ],
+            spacing=8,
+            horizontal_alignment=ft.CrossAxisAlignment.START,
+            scroll=ft.ScrollMode.AUTO
+            ),
+            padding=20,
+            expand=True
+        )
+
     def update_s3_path(self, e=None):
         rt = self.rt_dropdown.value
         squad = self.squad_dropdown.value
@@ -423,6 +604,233 @@ class AWSApp:
             self.save_selections()
 
         self.page.update()
+
+    def fetch_glue_jobs(self):
+        """Busca jobs do AWS Glue e seus status"""
+        try:
+            if not self.current_account_id:
+                return []
+
+            glue_client = boto3.client('glue')
+
+            # Buscar todos os jobs
+            paginator = glue_client.get_paginator('get_jobs')
+            jobs = []
+
+            for page in paginator.paginate():
+                for job in page['Jobs']:
+                    job_name = job['Name']
+
+                    # Buscar última execução do job
+                    try:
+                        runs_response = glue_client.get_job_runs(
+                            JobName=job_name,
+                            MaxResults=1
+                        )
+
+                        if runs_response['JobRuns']:
+                            last_run = runs_response['JobRuns'][0]
+                            status = last_run['JobRunState']
+
+                            # Formatear tempo de execução
+                            start_time = last_run.get('StartedOn')
+                            end_time = last_run.get('CompletedOn')
+
+                            if start_time:
+                                started_on_str = start_time.strftime("%Y-%m-%d %H:%M:%S")
+                            else:
+                                started_on_str = "N/A"
+
+                            # Calcular duração
+                            if start_time and end_time:
+                                duration = end_time - start_time
+                                duration_str = str(duration).split('.')[0]  # Remove microseconds
+                            elif start_time and status == 'RUNNING':
+                                duration = datetime.now(timezone.utc) - start_time
+                                duration_str = f"{str(duration).split('.')[0]} (em execução)"
+                            else:
+                                duration_str = "N/A"
+                        else:
+                            status = "NEVER_RUN"
+                            started_on_str = "Nunca executado"
+                            duration_str = "N/A"
+                            start_time = None
+
+                    except Exception as e:
+                        status = "ERROR"
+                        started_on_str = f"Erro: {str(e)}"
+                        duration_str = "N/A"
+                        start_time = None
+
+                    jobs.append({
+                        'name': job_name,
+                        'status': status,
+                        'last_execution': started_on_str,
+                        'duration': duration_str,
+                        'start_time_obj': start_time  # Para ordenação
+                    })
+
+            return jobs
+
+        except Exception as e:
+            print(f"Erro ao buscar jobs do Glue: {e}")
+            return []
+
+    def refresh_jobs(self, e=None):
+        """Atualiza a lista de jobs"""
+        if not self.current_account_id:
+            self.monitoring_status.value = "Faça login primeiro para visualizar jobs"
+            self.monitoring_status.color = ft.Colors.RED
+            self.page.update()
+            return
+
+        self.monitoring_progress.visible = True
+        self.refresh_button.disabled = True
+        self.monitoring_status.value = "Carregando jobs do Glue..."
+        self.monitoring_status.color = ft.Colors.ORANGE
+        self.page.update()
+
+        try:
+            # Buscar jobs em thread separada para não bloquear UI
+            def fetch_in_background():
+                jobs = self.fetch_glue_jobs()
+
+                # Atualizar UI na thread principal
+                def update_ui():
+                    self.all_jobs = jobs
+                    self.filter_jobs()  # Aplicar filtro atual
+
+                    self.last_update_text.value = f"Última atualização: {datetime.now().strftime('%H:%M:%S')}"
+                    self.monitoring_status.value = f"✅ {len(jobs)} jobs encontrados"
+                    self.monitoring_status.color = ft.Colors.GREEN
+
+                    self.monitoring_progress.visible = False
+                    self.refresh_button.disabled = False
+                    self.page.update()
+
+                # Executar atualização da UI na thread principal
+                self.page.run_thread(update_ui)
+
+            # Executar busca em background
+            threading.Thread(target=fetch_in_background, daemon=True).start()
+
+        except Exception as e:
+            self.monitoring_status.value = f"❌ Erro: {str(e)}"
+            self.monitoring_status.color = ft.Colors.RED
+            self.monitoring_progress.visible = False
+            self.refresh_button.disabled = False
+            self.page.update()
+
+    def filter_jobs(self, e=None):
+        """Filtra jobs baseado no texto de busca e status selecionado"""
+        filter_text = self.job_filter.value if self.job_filter.value else ""
+        status_filter = self.status_filter.value if hasattr(self, 'status_filter') else "TODOS"
+
+        # Começar com todos os jobs
+        filtered_by_name = self.all_jobs.copy()
+
+        # Aplicar filtro por nome se houver texto
+        if filter_text.strip():
+            # Dividir por vírgula e limpar espaços
+            filter_terms = [term.strip().lower() for term in filter_text.split(',') if term.strip()]
+
+            # Filtrar jobs que contenham qualquer um dos termos
+            filtered_by_name = []
+            for job in self.all_jobs:
+                job_name_lower = job['name'].lower()
+                # Se qualquer termo for encontrado no nome do job, incluir
+                if any(term in job_name_lower for term in filter_terms):
+                    filtered_by_name.append(job)
+
+        # Aplicar filtro por status
+        if status_filter and status_filter != "TODOS":
+            self.filtered_jobs = [job for job in filtered_by_name if job['status'] == status_filter]
+        else:
+            self.filtered_jobs = filtered_by_name
+
+        # Ordenar por data de execução (mais recente primeiro)
+        # Jobs com start_time_obj None (nunca executados) vão para o final
+        self.filtered_jobs.sort(key=lambda job: (
+            job.get('start_time_obj') is not None,  # True para jobs executados, False para nunca executados
+            job.get('start_time_obj') or datetime.min.replace(tzinfo=timezone.utc)  # Data para ordenação
+        ), reverse=True)
+
+        self.update_jobs_table()
+
+    def update_jobs_table(self):
+        """Atualiza a tabela de jobs com os dados filtrados"""
+        self.jobs_table.rows.clear()
+
+        for job in self.filtered_jobs:
+            # Definir cor do status
+            status_color = ft.Colors.GREY
+            if job['status'] == 'SUCCEEDED':
+                status_color = ft.Colors.GREEN
+            elif job['status'] == 'FAILED':
+                status_color = ft.Colors.RED
+            elif job['status'] == 'RUNNING':
+                status_color = ft.Colors.YELLOW
+            elif job['status'] == 'NEVER_RUN':
+                status_color = ft.Colors.BLUE
+
+            row = ft.DataRow(
+                cells=[
+                    ft.DataCell(ft.Text(job['name'], size=12)),
+                    ft.DataCell(ft.Text(job['status'], size=12, color=status_color, weight=ft.FontWeight.BOLD)),
+                    ft.DataCell(ft.Text(job['last_execution'], size=12)),
+                    ft.DataCell(ft.Text(job['duration'], size=12)),
+                ]
+            )
+            self.jobs_table.rows.append(row)
+
+        if hasattr(self, 'page'):
+            self.page.update()
+
+    def update_refresh_interval(self, e=None):
+        """Atualiza o intervalo de atualização automática"""
+        try:
+            hours = int(self.refresh_hours.value or 0)
+            minutes = int(self.refresh_minutes.value or 0)
+            seconds = int(self.refresh_seconds.value or 0)
+
+            self.refresh_interval = hours * 3600 + minutes * 60 + seconds
+
+            # Reiniciar timer se atualização automática estiver ativa
+            if self.auto_refresh_enabled.value and self.auto_refresh_timer:
+                self.stop_auto_refresh()
+                self.start_auto_refresh()
+
+        except ValueError:
+            # Se valores inválidos, usar padrão de 1 minuto
+            self.refresh_interval = 60
+
+    def toggle_auto_refresh(self, e):
+        """Ativa/desativa atualização automática"""
+        if self.auto_refresh_enabled.value:
+            self.start_auto_refresh()
+        else:
+            self.stop_auto_refresh()
+
+    def start_auto_refresh(self):
+        """Inicia timer de atualização automática"""
+        if self.refresh_interval > 0:
+            self.auto_refresh_timer = threading.Timer(self.refresh_interval, self.auto_refresh_callback)
+            self.auto_refresh_timer.daemon = True
+            self.auto_refresh_timer.start()
+
+    def stop_auto_refresh(self):
+        """Para timer de atualização automática"""
+        if self.auto_refresh_timer:
+            self.auto_refresh_timer.cancel()
+            self.auto_refresh_timer = None
+
+    def auto_refresh_callback(self):
+        """Callback para atualização automática"""
+        if self.auto_refresh_enabled.value:
+            self.refresh_jobs()
+            # Agendar próxima atualização
+            if self.auto_refresh_enabled.value:  # Verificar novamente caso tenha sido desabilitado
+                self.start_auto_refresh()
 
     def get_local_path(self):
         rt = self.rt_dropdown.value
@@ -761,6 +1169,16 @@ class AWSApp:
             self.current_profile = None
             self.current_account_id = None
             self.current_user_arn = None
+
+            # Parar atualização automática do monitoring
+            if hasattr(self, 'auto_refresh_timer'):
+                self.stop_auto_refresh()
+
+            # Limpar tabela de jobs do monitoring
+            if hasattr(self, 'jobs_table'):
+                self.jobs_table.rows.clear()
+                self.all_jobs = []
+                self.filtered_jobs = []
 
             # Atualizar barra de status
             self.refresh_aws_status()

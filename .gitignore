@@ -37,7 +37,7 @@ ENV/
 *~
 
 # Config files with sensitive data
-config.json
+#config.json
 .env
 *.log
 
