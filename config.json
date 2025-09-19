@@ -3,9 +3,9 @@
     "title": "Emps ados Manager",
     "theme_mode": "dark",
     "window": {
-      "width": 600,
-      "height": 750,
-      "resizable": false
+      "width": 800,
+      "height": 800,
+      "resizable": true
     }
   },
   "s3": {

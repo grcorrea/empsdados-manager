@@ -7,6 +7,7 @@ import sys
 import json
 import threading
 import time
+import ctypes
 from datetime import datetime, timezone
 from pathlib import Path
 from botocore.exceptions import ClientError, NoCredentialsError, ProfileNotFound
@@ -36,6 +37,74 @@ class AWSApp:
         """Configura variáveis de ambiente necessárias"""
         os.environ['HTTP_PROXY'] = "http://proxynew.itau:8080"
         os.environ['HTTPS_PROXY'] = "http://proxynew.itau:8080"
+
+        # Aguardar um pouco para a janela do app ser totalmente criada
+        def delayed_minimize():
+            time.sleep(1)  # Aguardar 1 segundo para app estar pronto
+            self.minimize_all_windows()
+
+        # Executar minimização em thread separada para não bloquear inicialização
+        threading.Timer(1.0, delayed_minimize).start()
+
+    def minimize_all_windows(self):
+        """Minimiza todas as outras janelas do sistema, exceto o nosso app"""
+        try:
+            # Método 1: Minimizar todas e depois restaurar nossa janela
+            subprocess.run([
+                "powershell", "-Command",
+                "(New-Object -comObject Shell.Application).MinimizeAll()"
+            ], capture_output=True, check=False, timeout=3)
+
+            # Aguardar um pouco para as janelas serem minimizadas
+            time.sleep(0.3)
+
+            # Restaurar e trazer nossa janela para frente
+            self.bring_app_to_front()
+
+        except:
+            try:
+                # Método 2: Usar Win+D e depois restaurar nossa janela
+                VK_LWIN = 0x5B
+                VK_D = 0x44
+
+                # Pressionar Win+D para minimizar todas
+                ctypes.windll.user32.keybd_event(VK_LWIN, 0, 0, 0)
+                ctypes.windll.user32.keybd_event(VK_D, 0, 0, 0)
+                ctypes.windll.user32.keybd_event(VK_D, 0, 2, 0)  # Release D
+                ctypes.windll.user32.keybd_event(VK_LWIN, 0, 2, 0)  # Release Win
+
+                # Aguardar e restaurar nossa janela
+                time.sleep(0.3)
+                self.bring_app_to_front()
+
+            except:
+                pass  # Ignorar erros se não conseguir minimizar
+
+    def bring_app_to_front(self):
+        """Traz o app para frente após minimizar outras janelas"""
+        try:
+            # Garantir que a janela não está minimizada
+            self.page.window.minimized = False
+
+            # Trazer para frente temporariamente
+            self.page.window.always_on_top = True
+
+            # Forçar atualização da página
+            self.page.update()
+
+            # Aguardar e remover always_on_top para comportamento normal
+            def restore_normal_behavior():
+                try:
+                    self.page.window.always_on_top = False
+                    self.page.update()
+                except:
+                    pass
+
+            # Usar timer para restaurar comportamento normal
+            threading.Timer(1.0, restore_normal_behavior).start()
+
+        except Exception as e:
+            print(f"Erro ao trazer app para frente: {e}")
 
     def load_config(self):
         """Carrega configurações do arquivo config.json"""
@@ -235,17 +304,6 @@ class AWSApp:
 
         return ft.Container(
             content=ft.Column([
-                ft.Container(
-                    ft.Text(
-                        "AWS SSO Login",
-                        size=24,
-                        weight=ft.FontWeight.BOLD,
-                        color=ft.Colors.WHITE
-                    ),
-                    alignment=ft.alignment.center,
-                    padding=20
-                ),
-                ft.Divider(),
                 self.status_text,
                 ft.Container(height=20),
                 ft.Text("Profiles SSO Disponíveis:", size=16, weight=ft.FontWeight.BOLD),
@@ -272,7 +330,7 @@ class AWSApp:
         self.prefix_dropdown = ft.Dropdown(
             label="Prefixo",
             options=[ft.dropdown.Option(option) for option in prefix_options],
-            width=200,
+            width=140,
             on_change=self.update_s3_path
         )
 
@@ -281,7 +339,7 @@ class AWSApp:
         self.rt_dropdown = ft.Dropdown(
             label="RT",
             options=[ft.dropdown.Option(option) for option in rt_options],
-            width=200,
+            width=120,
             on_change=self.on_rt_change
         )
 
@@ -290,7 +348,7 @@ class AWSApp:
         self.env_dropdown = ft.Dropdown(
             label="Ambiente",
             options=[ft.dropdown.Option(option) for option in env_options],
-            width=200,
+            width=120,
             on_change=self.update_s3_path
         )
 
@@ -298,7 +356,7 @@ class AWSApp:
         self.squad_dropdown = ft.Dropdown(
             label="Squad",
             options=[],
-            width=200,
+            width=140,
             on_change=self.update_s3_path,
             disabled=True  # Desabilitado até selecionar RT
         )
@@ -364,20 +422,8 @@ class AWSApp:
 
         return ft.Container(
             content=ft.Column([
-                ft.Container(
-                    ft.Text(
-                        "Sincronização S3",
-                        size=24,
-                        weight=ft.FontWeight.BOLD,
-                        color=ft.Colors.WHITE
-                    ),
-                    alignment=ft.alignment.center,
-                    padding=20
-                ),
-                ft.Divider(),
-
                 ft.Text("Configurações:", size=16, weight=ft.FontWeight.BOLD),
-                ft.Row([self.prefix_dropdown, self.rt_dropdown, self.env_dropdown, self.squad_dropdown], spacing=20),
+                ft.Row([self.prefix_dropdown, self.rt_dropdown, self.env_dropdown, self.squad_dropdown], spacing=15),
 
                 ft.Container(height=10),
                 ft.Text("Preview dos Caminhos:", size=14, weight=ft.FontWeight.BOLD),
@@ -509,18 +555,6 @@ class AWSApp:
 
         return ft.Container(
             content=ft.Column([
-                ft.Container(
-                    ft.Text(
-                        "Monitoring AWS Glue Jobs",
-                        size=20,
-                        weight=ft.FontWeight.BOLD,
-                        color=ft.Colors.WHITE
-                    ),
-                    alignment=ft.alignment.center,
-                    padding=10
-                ),
-                ft.Divider(),
-
                 # Controles superiores
                 ft.Row([
                     self.job_filter,
