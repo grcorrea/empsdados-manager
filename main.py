@@ -137,46 +137,100 @@ class AWSApp:
         self.page.title = app_config.get("title", "AWS Manager")
         self.page.theme_mode = ft.ThemeMode.DARK if app_config.get("theme_mode") == "dark" else ft.ThemeMode.LIGHT
 
+        # Tema dark customizado com mais contraste e visual aprimorado
+        self.page.theme = ft.Theme(
+            color_scheme=ft.ColorScheme(
+                primary=ft.Colors.BLUE_600,
+                on_primary=ft.Colors.WHITE,
+                secondary=ft.Colors.CYAN_500,
+                on_secondary=ft.Colors.BLACK,
+                surface=ft.Colors.GREY_800,
+                on_surface=ft.Colors.WHITE,
+                background=ft.Colors.GREY_900,
+                on_background=ft.Colors.WHITE,
+                error=ft.Colors.RED_500,
+                on_error=ft.Colors.WHITE,
+                outline=ft.Colors.GREY_600,
+                shadow=ft.Colors.BLACK54,
+            ),
+        )
+
+        # Configurações da janela
         window_config = app_config.get("window", {})
         self.page.window.width = window_config.get("width", 600)
         self.page.window.height = window_config.get("height", 750)
         self.page.window.resizable = window_config.get("resizable", False)
         self.page.window.center()
 
+        # Background da página com gradiente sutil
+        self.page.bgcolor = ft.Colors.GREY_900
+
     def setup_status_bar(self):
         # Elementos da barra de status
         self.status_profile_text = ft.Text(
             "Profile: Não logado",
             size=12,
-            color=ft.Colors.GREY_400
+            color=ft.Colors.GREY_400,
+            weight=ft.FontWeight.W_500
         )
 
         self.status_account_text = ft.Text(
             "Account ID: N/A",
             size=12,
-            color=ft.Colors.GREY_400
+            color=ft.Colors.GREY_400,
+            weight=ft.FontWeight.W_500
         )
 
         self.status_refresh_button = ft.IconButton(
             icon=ft.Icons.REFRESH,
             tooltip="Atualizar Status",
             on_click=self.refresh_aws_status,
-            icon_size=16
+            icon_size=16,
+            style=ft.ButtonStyle(
+                color=ft.Colors.BLUE_400,
+                bgcolor={
+                    ft.ControlState.HOVERED: ft.Colors.BLUE_600,
+                },
+                shape=ft.CircleBorder(),
+                padding=8,
+            )
         )
 
-        # Container da barra de status
+        # Container da barra de status com visual aprimorado
         self.status_bar = ft.Container(
             content=ft.Row([
-                ft.Icon(ft.Icons.ACCOUNT_CIRCLE, size=16, color=ft.Colors.BLUE),
-                self.status_profile_text,
-                ft.VerticalDivider(),
-                ft.Icon(ft.Icons.CLOUD, size=16, color=ft.Colors.BLUE),
-                self.status_account_text,
+                ft.Container(
+                    content=ft.Row([
+                        ft.Icon(ft.Icons.ACCOUNT_CIRCLE, size=16, color=ft.Colors.BLUE_400),
+                        self.status_profile_text,
+                    ], spacing=8),
+                    padding=ft.padding.symmetric(horizontal=12, vertical=6),
+                    bgcolor=ft.Colors.GREY_800,
+                    border_radius=6,
+                    border=ft.border.all(1, ft.Colors.GREY_700),
+                ),
+                ft.Container(
+                    content=ft.Row([
+                        ft.Icon(ft.Icons.CLOUD, size=16, color=ft.Colors.CYAN_400),
+                        self.status_account_text,
+                    ], spacing=8),
+                    padding=ft.padding.symmetric(horizontal=12, vertical=6),
+                    bgcolor=ft.Colors.GREY_800,
+                    border_radius=6,
+                    border=ft.border.all(1, ft.Colors.GREY_700),
+                ),
+                ft.Container(expand=True),
                 self.status_refresh_button
-            ], spacing=10, alignment=ft.MainAxisAlignment.START),
-            padding=ft.padding.symmetric(horizontal=20, vertical=10),
-            bgcolor=ft.Colors.GREY_900,
-            border=ft.border.only(top=ft.BorderSide(1, ft.Colors.GREY_700))
+            ], spacing=15, alignment=ft.MainAxisAlignment.START),
+            padding=ft.padding.symmetric(horizontal=20, vertical=12),
+            bgcolor=ft.Colors.GREY_800,
+            border=ft.border.only(top=ft.BorderSide(2, ft.Colors.GREY_700)),
+            shadow=ft.BoxShadow(
+                spread_radius=0,
+                blur_radius=4,
+                color=ft.Colors.BLACK26,
+                offset=ft.Offset(0, -2),
+            )
         )
 
     def refresh_aws_status(self, e=None):
@@ -280,7 +334,8 @@ class AWSApp:
         self.status_text = ft.Text(
             "Verificando status de login...",
             size=16,
-            color=ft.Colors.ORANGE
+            color=ft.Colors.ORANGE_600,
+            weight=ft.FontWeight.W_500
         )
 
         self.profile_list = ft.Column(spacing=10)
@@ -288,7 +343,12 @@ class AWSApp:
             "Login",
             on_click=self.on_login_click,
             disabled=True,
-            width=200
+            width=200,
+            height=45,
+            style=ft.ButtonStyle(
+                shape=ft.RoundedRectangleBorder(radius=10),
+                elevation=4,
+            )
         )
 
         self.logout_button = ft.ElevatedButton(
@@ -296,30 +356,83 @@ class AWSApp:
             on_click=self.on_logout_click,
             visible=False,
             width=200,
-            color=ft.Colors.WHITE,
-            bgcolor=ft.Colors.RED_600
+            height=45,
+            style=ft.ButtonStyle(
+                bgcolor={
+                    ft.ControlState.DEFAULT: ft.Colors.RED_600,
+                    ft.ControlState.HOVERED: ft.Colors.RED_500,
+                    ft.ControlState.PRESSED: ft.Colors.RED_700,
+                },
+                color=ft.Colors.WHITE,
+                shape=ft.RoundedRectangleBorder(radius=10),
+                elevation=4,
+            )
         )
 
-        self.progress_ring = ft.ProgressRing(visible=False)
+        self.progress_ring = ft.ProgressRing(
+            visible=False,
+            stroke_width=3,
+            color=ft.Colors.BLUE_400
+        )
 
         return ft.Container(
             content=ft.Column([
-                self.status_text,
+                # Container para status principal
+                ft.Container(
+                    content=self.status_text,
+                    padding=ft.padding.all(15),
+                    bgcolor=ft.Colors.GREY_800,
+                    border_radius=10,
+                    border=ft.border.all(1, ft.Colors.GREY_600),
+                    shadow=ft.BoxShadow(
+                        spread_radius=0,
+                        blur_radius=8,
+                        color=ft.Colors.BLACK26,
+                        offset=ft.Offset(0, 2),
+                    )
+                ),
+
                 ft.Container(height=20),
-                ft.Text("Profiles SSO Disponíveis:", size=16, weight=ft.FontWeight.BOLD),
-                self.profile_list,
+
+                # Container para lista de profiles
+                ft.Container(
+                    content=ft.Column([
+                        ft.Text(
+                            "Profiles SSO Disponíveis:",
+                            size=16,
+                            weight=ft.FontWeight.BOLD,
+                            color=ft.Colors.WHITE
+                        ),
+                        ft.Container(height=10),
+                        ft.Container(
+                            content=self.profile_list,
+                            bgcolor=ft.Colors.GREY_800,
+                            border_radius=8,
+                            border=ft.border.all(1, ft.Colors.GREY_700),
+                            padding=ft.padding.all(15),
+                        )
+                    ]),
+                    expand=True
+                ),
+
                 ft.Container(height=20),
-                ft.Row([
-                    self.login_button,
-                    self.logout_button,
-                    self.progress_ring
-                ], alignment=ft.MainAxisAlignment.CENTER),
+
+                # Container para botões de ação
+                ft.Container(
+                    content=ft.Row([
+                        self.login_button,
+                        self.logout_button,
+                        self.progress_ring
+                    ], alignment=ft.MainAxisAlignment.CENTER, spacing=15),
+                    padding=ft.padding.symmetric(vertical=15),
+                ),
             ],
             spacing=15,
-            horizontal_alignment=ft.CrossAxisAlignment.START
+            horizontal_alignment=ft.CrossAxisAlignment.STRETCH
             ),
-            padding=30,
-            expand=True
+            padding=25,
+            expand=True,
+            bgcolor=ft.Colors.GREY_900
         )
 
     def create_s3_tab(self):
@@ -375,8 +488,12 @@ class AWSApp:
             "📁 Abrir Pasta",
             on_click=self.open_local_folder,
             disabled=True,
-            width=120,
-            height=35
+            width=130,
+            height=40,
+            style=ft.ButtonStyle(
+                shape=ft.RoundedRectangleBorder(radius=8),
+                elevation=3,
+            )
         )
 
         # Final S3 Path Display
@@ -392,14 +509,24 @@ class AWSApp:
             "🔄 Local → S3",
             on_click=self.sync_to_s3,
             disabled=True,
-            width=150
+            width=160,
+            height=45,
+            style=ft.ButtonStyle(
+                shape=ft.RoundedRectangleBorder(radius=10),
+                elevation=4,
+            )
         )
 
         self.sync_from_s3_button = ft.ElevatedButton(
             "🔄 S3 → Local",
             on_click=self.sync_from_s3,
             disabled=True,
-            width=150
+            width=160,
+            height=45,
+            style=ft.ButtonStyle(
+                shape=ft.RoundedRectangleBorder(radius=10),
+                elevation=4,
+            )
         )
 
         # Checkbox para --delete no S3 → Local
@@ -422,39 +549,89 @@ class AWSApp:
 
         return ft.Container(
             content=ft.Column([
-                ft.Text("Configurações:", size=16, weight=ft.FontWeight.BOLD),
-                ft.Row([self.prefix_dropdown, self.rt_dropdown, self.env_dropdown, self.squad_dropdown], spacing=15),
+                # Container de configurações
+                ft.Container(
+                    content=ft.Column([
+                        ft.Text("Configurações:", size=16, weight=ft.FontWeight.BOLD, color=ft.Colors.WHITE),
+                        ft.Container(height=10),
+                        ft.Row([self.prefix_dropdown, self.rt_dropdown, self.env_dropdown, self.squad_dropdown], spacing=15),
+                    ]),
+                    padding=ft.padding.all(20),
+                    bgcolor=ft.Colors.GREY_800,
+                    border_radius=12,
+                    border=ft.border.all(1, ft.Colors.GREY_700),
+                    shadow=ft.BoxShadow(
+                        spread_radius=0,
+                        blur_radius=8,
+                        color=ft.Colors.BLACK26,
+                        offset=ft.Offset(0, 2),
+                    )
+                ),
 
-                ft.Container(height=10),
-                ft.Text("Preview dos Caminhos:", size=14, weight=ft.FontWeight.BOLD),
-                ft.Row([
-                    ft.Column([
-                        self.local_path_text,
-                    ], expand=True),
-                    self.open_folder_button
-                ], spacing=10, alignment=ft.MainAxisAlignment.SPACE_BETWEEN),
-                self.s3_path_text,
+                ft.Container(height=15),
 
-                ft.Container(height=20),
-                ft.Text("Sincronização:", size=16, weight=ft.FontWeight.BOLD),
-                ft.Row([
-                    self.sync_to_s3_button,
-                    self.sync_from_s3_button,
-                    self.s3_progress
-                ], spacing=20),
+                # Container de preview dos caminhos
+                ft.Container(
+                    content=ft.Column([
+                        ft.Text("Preview dos Caminhos:", size=14, weight=ft.FontWeight.BOLD, color=ft.Colors.WHITE),
+                        ft.Container(height=10),
+                        ft.Row([
+                            ft.Column([
+                                self.local_path_text,
+                            ], expand=True),
+                            self.open_folder_button
+                        ], spacing=10, alignment=ft.MainAxisAlignment.SPACE_BETWEEN),
+                        ft.Container(height=8),
+                        self.s3_path_text,
+                    ]),
+                    padding=ft.padding.all(20),
+                    bgcolor=ft.Colors.GREY_800,
+                    border_radius=12,
+                    border=ft.border.all(1, ft.Colors.GREY_700),
+                    shadow=ft.BoxShadow(
+                        spread_radius=0,
+                        blur_radius=8,
+                        color=ft.Colors.BLACK26,
+                        offset=ft.Offset(0, 2),
+                    )
+                ),
 
-                ft.Container(height=5),
-                self.delete_checkbox,
+                ft.Container(height=15),
 
-                ft.Container(height=10),
-                self.s3_status,
+                # Container de sincronização
+                ft.Container(
+                    content=ft.Column([
+                        ft.Text("Sincronização:", size=16, weight=ft.FontWeight.BOLD, color=ft.Colors.WHITE),
+                        ft.Container(height=15),
+                        ft.Row([
+                            self.sync_to_s3_button,
+                            self.sync_from_s3_button,
+                            self.s3_progress
+                        ], spacing=20, alignment=ft.MainAxisAlignment.CENTER),
+                        ft.Container(height=15),
+                        self.delete_checkbox,
+                        ft.Container(height=10),
+                        self.s3_status,
+                    ]),
+                    padding=ft.padding.all(20),
+                    bgcolor=ft.Colors.GREY_800,
+                    border_radius=12,
+                    border=ft.border.all(1, ft.Colors.GREY_700),
+                    shadow=ft.BoxShadow(
+                        spread_radius=0,
+                        blur_radius=8,
+                        color=ft.Colors.BLACK26,
+                        offset=ft.Offset(0, 2),
+                    )
+                ),
             ],
             spacing=15,
-            horizontal_alignment=ft.CrossAxisAlignment.START,
+            horizontal_alignment=ft.CrossAxisAlignment.STRETCH,
             scroll=ft.ScrollMode.AUTO
             ),
-            padding=30,
-            expand=True
+            padding=25,
+            expand=True,
+            bgcolor=ft.Colors.GREY_900
         )
 
     def create_monitoring_tab(self):
@@ -508,7 +685,12 @@ class AWSApp:
         self.refresh_button = ft.ElevatedButton(
             "🔄 Atualizar",
             on_click=self.refresh_jobs,
-            width=120
+            width=130,
+            height=40,
+            style=ft.ButtonStyle(
+                shape=ft.RoundedRectangleBorder(radius=8),
+                elevation=3,
+            )
         )
 
         # Progress e status
@@ -538,13 +720,20 @@ class AWSApp:
             expand=True
         )
 
-        # Container scrollável para a tabela
+        # Container scrollável para a tabela com estilo aprimorado
         self.table_container = ft.Container(
             content=self.jobs_table,
             expand=True,
+            bgcolor=ft.Colors.GREY_800,
             border=ft.border.all(1, ft.Colors.GREY_700),
-            border_radius=5,
-            padding=10
+            border_radius=12,
+            padding=15,
+            shadow=ft.BoxShadow(
+                spread_radius=0,
+                blur_radius=8,
+                color=ft.Colors.BLACK26,
+                offset=ft.Offset(0, 2),
+            )
         )
 
         # Inicializar variáveis de controle
@@ -555,50 +744,79 @@ class AWSApp:
 
         return ft.Container(
             content=ft.Column([
-                # Controles superiores
-                ft.Row([
-                    self.job_filter,
-                    ft.Container(width=10),
-                    self.status_filter,
-                    ft.Container(width=15),
-                    self.refresh_button,
-                    self.monitoring_progress
-                ], alignment=ft.MainAxisAlignment.START),
+                # Container de controles superiores
+                ft.Container(
+                    content=ft.Column([
+                        ft.Text("Filtros e Controles:", size=16, weight=ft.FontWeight.BOLD, color=ft.Colors.WHITE),
+                        ft.Container(height=10),
+                        ft.Row([
+                            self.job_filter,
+                            ft.Container(width=15),
+                            self.status_filter,
+                            ft.Container(width=20),
+                            self.refresh_button,
+                            self.monitoring_progress
+                        ], alignment=ft.MainAxisAlignment.START),
 
-                ft.Container(height=5),
+                        ft.Container(height=15),
 
-                # Controles de atualização automática
-                ft.Row([
-                    self.auto_refresh_enabled,
-                    ft.Container(width=15),
-                    ft.Text("Intervalo:", size=14),
-                    self.refresh_hours,
-                    ft.Text("h", size=14),
-                    self.refresh_minutes,
-                    ft.Text("min", size=14),
-                ], alignment=ft.MainAxisAlignment.START),
+                        # Controles de atualização automática
+                        ft.Row([
+                            self.auto_refresh_enabled,
+                            ft.Container(width=15),
+                            ft.Text("Intervalo:", size=14, color=ft.Colors.WHITE),
+                            self.refresh_hours,
+                            ft.Text("h", size=14, color=ft.Colors.WHITE),
+                            self.refresh_minutes,
+                            ft.Text("min", size=14, color=ft.Colors.WHITE),
+                        ], alignment=ft.MainAxisAlignment.START),
+                    ]),
+                    padding=ft.padding.all(20),
+                    bgcolor=ft.Colors.GREY_800,
+                    border_radius=12,
+                    border=ft.border.all(1, ft.Colors.GREY_700),
+                    shadow=ft.BoxShadow(
+                        spread_radius=0,
+                        blur_radius=8,
+                        color=ft.Colors.BLACK26,
+                        offset=ft.Offset(0, 2),
+                    )
+                ),
 
-                ft.Container(height=5),
+                ft.Container(height=15),
 
-                # Status e última atualização
-                ft.Row([
-                    self.monitoring_status,
-                    ft.Container(expand=True),
-                    self.last_update_text
-                ], alignment=ft.MainAxisAlignment.SPACE_BETWEEN),
+                # Container de status
+                ft.Container(
+                    content=ft.Row([
+                        self.monitoring_status,
+                        ft.Container(expand=True),
+                        self.last_update_text
+                    ], alignment=ft.MainAxisAlignment.SPACE_BETWEEN),
+                    padding=ft.padding.symmetric(horizontal=20, vertical=12),
+                    bgcolor=ft.Colors.GREY_800,
+                    border_radius=8,
+                    border=ft.border.all(1, ft.Colors.GREY_700),
+                ),
 
-                ft.Container(height=5),
+                ft.Container(height=15),
 
-                # Tabela
-                ft.Text("Jobs do AWS Glue:", size=14, weight=ft.FontWeight.BOLD),
-                self.table_container,
+                # Container da tabela
+                ft.Container(
+                    content=ft.Column([
+                        ft.Text("Jobs do AWS Glue:", size=14, weight=ft.FontWeight.BOLD, color=ft.Colors.WHITE),
+                        ft.Container(height=10),
+                        self.table_container,
+                    ]),
+                    expand=True
+                ),
             ],
             spacing=8,
-            horizontal_alignment=ft.CrossAxisAlignment.START,
+            horizontal_alignment=ft.CrossAxisAlignment.STRETCH,
             scroll=ft.ScrollMode.AUTO
             ),
-            padding=20,
-            expand=True
+            padding=25,
+            expand=True,
+            bgcolor=ft.Colors.GREY_900
         )
 
     def update_s3_path(self, e=None):
