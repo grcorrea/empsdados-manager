@@ -9,25 +9,35 @@
     }
   },
   "s3": {
+    "prefix_options": [
+      "local-developers",
+      "local-users"
+    ],
     "rt_options": [
       "fluxo",
       "corebank",
       "assessoria",
       "credito"
     ],
-    "squad_options": [
-      "boleto",
-      "recorrente",
-      "cobranca",
-      "adq",
-      "pix"
-    ],
+    "rt_squad_hierarchy": {
+      "fluxo": [
+        "boleto",
+        "recorrente"
+      ],
+      "corebank": [
+        "iam",
+        "foundation"
+      ],
+      "assessoria": [],
+      "credito": []
+    },
     "environment_options": [
       "sirius",
       "athena"
     ],
     "default_base_path": "s3",
     "current_selections": {
+      "prefix": "local-developers",
       "rt": "fluxo",
       "squad": "boleto",
       "env": "sirius"

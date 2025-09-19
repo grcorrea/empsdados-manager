@@ -267,22 +267,22 @@ class AWSApp:
     def create_s3_tab(self):
         s3_config = self.config.get("s3", {})
 
+        # Prefix Dropdown
+        prefix_options = s3_config.get("prefix_options", ["local-developers", "local-users"])
+        self.prefix_dropdown = ft.Dropdown(
+            label="Prefixo",
+            options=[ft.dropdown.Option(option) for option in prefix_options],
+            width=200,
+            on_change=self.update_s3_path
+        )
+
         # RT Dropdown
         rt_options = s3_config.get("rt_options", ["fluxo", "corebank", "assessoria", "credito"])
         self.rt_dropdown = ft.Dropdown(
             label="RT",
             options=[ft.dropdown.Option(option) for option in rt_options],
             width=200,
-            on_change=self.update_s3_path
-        )
-
-        # Squad Dropdown
-        squad_options = s3_config.get("squad_options", ["data-engineering", "analytics", "data-science", "platform"])
-        self.squad_dropdown = ft.Dropdown(
-            label="Squad",
-            options=[ft.dropdown.Option(option) for option in squad_options],
-            width=200,
-            on_change=self.update_s3_path
+            on_change=self.on_rt_change
         )
 
         # Environment Dropdown
@@ -294,10 +294,19 @@ class AWSApp:
             on_change=self.update_s3_path
         )
 
+        # Squad Dropdown (inicialmente vazio, será preenchido baseado no RT)
+        self.squad_dropdown = ft.Dropdown(
+            label="Squad",
+            options=[],
+            width=200,
+            on_change=self.update_s3_path,
+            disabled=True  # Desabilitado até selecionar RT
+        )
+
 
         # Local Path Display
         self.local_path_text = ft.Text(
-            "Pasta local: Selecione RT, Squad e Ambiente",
+            "Pasta local: Selecione Prefixo, RT, Ambiente e Squad",
             size=12,
             color=ft.Colors.GREY_400,
             selectable=True
@@ -314,7 +323,7 @@ class AWSApp:
 
         # Final S3 Path Display
         self.s3_path_text = ft.Text(
-            "Caminho S3: Selecione RT, Squad e Ambiente",
+            "Caminho S3: Selecione Prefixo, RT, Ambiente e Squad",
             size=12,
             color=ft.Colors.GREY_400,
             selectable=True
@@ -333,6 +342,13 @@ class AWSApp:
             on_click=self.sync_from_s3,
             disabled=True,
             width=150
+        )
+
+        # Checkbox para --delete no S3 → Local
+        self.delete_checkbox = ft.Checkbox(
+            label="Usar --delete (S3 → Local)",
+            value=False,
+            tooltip="Remove arquivos locais que não existem no S3"
         )
 
         # Progress and Status
@@ -361,7 +377,7 @@ class AWSApp:
                 ft.Divider(),
 
                 ft.Text("Configurações:", size=16, weight=ft.FontWeight.BOLD),
-                ft.Row([self.rt_dropdown, self.squad_dropdown, self.env_dropdown], spacing=20),
+                ft.Row([self.prefix_dropdown, self.rt_dropdown, self.env_dropdown, self.squad_dropdown], spacing=20),
 
                 ft.Container(height=10),
                 ft.Text("Preview dos Caminhos:", size=14, weight=ft.FontWeight.BOLD),
@@ -380,6 +396,9 @@ class AWSApp:
                     self.sync_from_s3_button,
                     self.s3_progress
                 ], spacing=20),
+
+                ft.Container(height=5),
+                self.delete_checkbox,
 
                 ft.Container(height=10),
                 self.s3_status,
@@ -438,13 +457,6 @@ class AWSApp:
             on_change=self.update_refresh_interval
         )
 
-        self.refresh_seconds = ft.TextField(
-            label="Seg",
-            value="0",
-            width=80,
-            text_align=ft.TextAlign.CENTER,
-            on_change=self.update_refresh_interval
-        )
 
         # Botão de atualização manual
         self.refresh_button = ft.ElevatedButton(
@@ -527,10 +539,9 @@ class AWSApp:
                     ft.Container(width=15),
                     ft.Text("Intervalo:", size=14),
                     self.refresh_hours,
-                    ft.Text(":", size=14),
+                    ft.Text("h", size=14),
                     self.refresh_minutes,
-                    ft.Text(":", size=14),
-                    self.refresh_seconds,
+                    ft.Text("min", size=14),
                 ], alignment=ft.MainAxisAlignment.START),
 
                 ft.Container(height=5),
@@ -557,42 +568,75 @@ class AWSApp:
         )
 
     def update_s3_path(self, e=None):
+        prefix = self.prefix_dropdown.value
         rt = self.rt_dropdown.value
         squad = self.squad_dropdown.value
         env = self.env_dropdown.value
 
+        # Verificar se RT tem squads disponíveis
+        rt_has_squads = False
+        if rt:
+            rt_squad_hierarchy = self.config.get("s3", {}).get("rt_squad_hierarchy", {})
+            available_squads = rt_squad_hierarchy.get(rt, [])
+            rt_has_squads = len(available_squads) > 0
+
         # Update local path
-        if rt and squad and env:
+        if prefix and rt and env and (squad or not rt_has_squads):
             user_home = Path.home()
             s3_base = self.config.get("s3", {}).get("default_base_path", "s3")
-            local_path = user_home / s3_base / rt / env / squad
-            self.local_path_text.value = f"Pasta local: {local_path}"
-            self.local_path_text.color = ft.Colors.GREEN
+            if rt_has_squads and squad:
+                local_path = user_home / s3_base / prefix / rt / env / squad
+            elif not rt_has_squads:
+                local_path = user_home / s3_base / prefix / rt / env
+            else:
+                local_path = None
 
-            # Enable open folder button
-            self.open_folder_button.disabled = False
+            if local_path:
+                self.local_path_text.value = f"Pasta local: {local_path}"
+                self.local_path_text.color = ft.Colors.GREEN
+                # Enable open folder button
+                self.open_folder_button.disabled = False
+            else:
+                self.local_path_text.value = "Pasta local: Selecione todas as opções necessárias"
+                self.local_path_text.color = ft.Colors.GREY_400
+                self.open_folder_button.disabled = True
         else:
-            self.local_path_text.value = "Pasta local: Selecione RT, Squad e Ambiente"
+            if rt_has_squads:
+                self.local_path_text.value = "Pasta local: Selecione Prefixo, RT, Ambiente e Squad"
+            else:
+                self.local_path_text.value = "Pasta local: Selecione Prefixo, RT e Ambiente"
             self.local_path_text.color = ft.Colors.GREY_400
-
             # Disable open folder button
             self.open_folder_button.disabled = True
 
         # Update S3 path
-        if rt and squad and env and self.current_account_id:
+        if prefix and rt and env and (squad or not rt_has_squads) and self.current_account_id:
             s3_base_uri = f"s3://itau-self-wkp-sa-east-1-{self.current_account_id}"
-            final_s3_path = f"{s3_base_uri}/{rt}/{env}/{squad}/"
-            self.s3_path_text.value = f"Caminho S3: {final_s3_path}"
-            self.s3_path_text.color = ft.Colors.GREEN
+            if rt_has_squads and squad:
+                final_s3_path = f"{s3_base_uri}/{prefix}/{rt}/{env}/{squad}/"
+            elif not rt_has_squads:
+                final_s3_path = f"{s3_base_uri}/{prefix}/{rt}/{env}/"
+            else:
+                final_s3_path = None
 
-            # Enable sync buttons
-            self.sync_to_s3_button.disabled = False
-            self.sync_from_s3_button.disabled = False
+            if final_s3_path:
+                self.s3_path_text.value = f"Caminho S3: {final_s3_path}"
+                self.s3_path_text.color = ft.Colors.GREEN
+                # Enable sync buttons
+                self.sync_to_s3_button.disabled = False
+                self.sync_from_s3_button.disabled = False
+            else:
+                self.s3_path_text.value = "Caminho S3: Selecione todas as opções necessárias"
+                self.s3_path_text.color = ft.Colors.GREY_400
+                self.sync_to_s3_button.disabled = True
+                self.sync_from_s3_button.disabled = True
         else:
             if not self.current_account_id:
                 self.s3_path_text.value = "Caminho S3: Faça login primeiro"
+            elif rt_has_squads:
+                self.s3_path_text.value = "Caminho S3: Selecione Prefixo, RT, Ambiente e Squad"
             else:
-                self.s3_path_text.value = "Caminho S3: Selecione RT, Squad e Ambiente"
+                self.s3_path_text.value = "Caminho S3: Selecione Prefixo, RT e Ambiente"
             self.s3_path_text.color = ft.Colors.GREY_400
 
             # Disable sync buttons
@@ -604,6 +648,37 @@ class AWSApp:
             self.save_selections()
 
         self.page.update()
+
+    def on_rt_change(self, e):
+        """Chamado quando RT é alterado - atualiza as squads disponíveis"""
+        self.update_squad_options()
+        self.update_s3_path()
+
+    def update_squad_options(self):
+        """Atualiza as opções do dropdown Squad baseado no RT selecionado"""
+        rt_value = self.rt_dropdown.value
+
+        if rt_value:
+            # Obter hierarquia do config
+            rt_squad_hierarchy = self.config.get("s3", {}).get("rt_squad_hierarchy", {})
+            squad_options = rt_squad_hierarchy.get(rt_value, [])
+
+            # Atualizar opções do dropdown
+            self.squad_dropdown.options = [ft.dropdown.Option(option) for option in squad_options]
+            self.squad_dropdown.disabled = len(squad_options) == 0
+
+            # Limpar seleção atual se não for mais válida
+            if self.squad_dropdown.value and self.squad_dropdown.value not in squad_options:
+                self.squad_dropdown.value = None
+
+        else:
+            # Se nenhum RT selecionado, limpar e desabilitar squad
+            self.squad_dropdown.options = []
+            self.squad_dropdown.disabled = True
+            self.squad_dropdown.value = None
+
+        if hasattr(self, 'page'):
+            self.page.update()
 
     def fetch_glue_jobs(self):
         """Busca jobs do AWS Glue e seus status"""
@@ -791,9 +866,8 @@ class AWSApp:
         try:
             hours = int(self.refresh_hours.value or 0)
             minutes = int(self.refresh_minutes.value or 0)
-            seconds = int(self.refresh_seconds.value or 0)
 
-            self.refresh_interval = hours * 3600 + minutes * 60 + seconds
+            self.refresh_interval = hours * 3600 + minutes * 60
 
             # Reiniciar timer se atualização automática estiver ativa
             if self.auto_refresh_enabled.value and self.auto_refresh_timer:
@@ -833,22 +907,50 @@ class AWSApp:
                 self.start_auto_refresh()
 
     def get_local_path(self):
+        prefix = self.prefix_dropdown.value
         rt = self.rt_dropdown.value
         squad = self.squad_dropdown.value
         env = self.env_dropdown.value
-        if rt and squad and env:
-            s3_base = self.config.get("s3", {}).get("default_base_path", "s3")
-            return Path.home() / s3_base / rt / env / squad
-        return None
+
+        if not prefix or not rt or not env:
+            return None
+
+        # Verificar se RT tem squads disponíveis
+        rt_squad_hierarchy = self.config.get("s3", {}).get("rt_squad_hierarchy", {})
+        available_squads = rt_squad_hierarchy.get(rt, [])
+        rt_has_squads = len(available_squads) > 0
+
+        s3_base = self.config.get("s3", {}).get("default_base_path", "s3")
+
+        if rt_has_squads and squad:
+            return Path.home() / s3_base / prefix / rt / env / squad
+        elif not rt_has_squads:
+            return Path.home() / s3_base / prefix / rt / env
+        else:
+            return None
 
     def get_s3_path(self):
+        prefix = self.prefix_dropdown.value
         rt = self.rt_dropdown.value
         squad = self.squad_dropdown.value
         env = self.env_dropdown.value
-        if rt and squad and env and self.current_account_id:
-            s3_base_uri = f"s3://itau-self-wkp-sa-east-1-{self.current_account_id}"
-            return f"{s3_base_uri}/{rt}/{env}/{squad}/"
-        return None
+
+        if not prefix or not rt or not env or not self.current_account_id:
+            return None
+
+        # Verificar se RT tem squads disponíveis
+        rt_squad_hierarchy = self.config.get("s3", {}).get("rt_squad_hierarchy", {})
+        available_squads = rt_squad_hierarchy.get(rt, [])
+        rt_has_squads = len(available_squads) > 0
+
+        s3_base_uri = f"s3://itau-self-wkp-sa-east-1-{self.current_account_id}"
+
+        if rt_has_squads and squad:
+            return f"{s3_base_uri}/{prefix}/{rt}/{env}/{squad}/"
+        elif not rt_has_squads:
+            return f"{s3_base_uri}/{prefix}/{rt}/{env}/"
+        else:
+            return None
 
     def load_saved_selections(self):
         """Carrega as seleções salvas do config.json e aplica aos dropdowns"""
@@ -858,14 +960,26 @@ class AWSApp:
             current_selections = self.config.get("s3", {}).get("current_selections", {})
 
             # Aplicar seleções aos dropdowns
+            if current_selections.get("prefix"):
+                self.prefix_dropdown.value = current_selections["prefix"]
+
             if current_selections.get("rt"):
                 self.rt_dropdown.value = current_selections["rt"]
-
-            if current_selections.get("squad"):
-                self.squad_dropdown.value = current_selections["squad"]
+                # Atualizar squads baseado no RT carregado
+                self.update_squad_options()
 
             if current_selections.get("env"):
                 self.env_dropdown.value = current_selections["env"]
+
+            # Carregar squad APÓS atualizar as opções baseadas no RT
+            if current_selections.get("squad"):
+                # Verificar se a squad salva é válida para o RT atual
+                rt_value = self.rt_dropdown.value
+                if rt_value:
+                    rt_squad_hierarchy = self.config.get("s3", {}).get("rt_squad_hierarchy", {})
+                    valid_squads = rt_squad_hierarchy.get(rt_value, [])
+                    if current_selections["squad"] in valid_squads:
+                        self.squad_dropdown.value = current_selections["squad"]
 
             # Atualizar caminhos com as seleções carregadas
             self.update_s3_path()
@@ -878,6 +992,7 @@ class AWSApp:
     def save_selections(self):
         """Salva as seleções atuais no config.json"""
         try:
+            prefix = self.prefix_dropdown.value if hasattr(self, 'prefix_dropdown') else None
             rt = self.rt_dropdown.value if hasattr(self, 'rt_dropdown') else None
             squad = self.squad_dropdown.value if hasattr(self, 'squad_dropdown') else None
             env = self.env_dropdown.value if hasattr(self, 'env_dropdown') else None
@@ -888,6 +1003,7 @@ class AWSApp:
             if "current_selections" not in self.config["s3"]:
                 self.config["s3"]["current_selections"] = {}
 
+            self.config["s3"]["current_selections"]["prefix"] = prefix
             self.config["s3"]["current_selections"]["rt"] = rt
             self.config["s3"]["current_selections"]["squad"] = squad
             self.config["s3"]["current_selections"]["env"] = env
@@ -919,7 +1035,7 @@ class AWSApp:
                 self.s3_status.value = f"📁 Pasta aberta: {local_path}"
                 self.s3_status.color = ft.Colors.BLUE
             else:
-                self.s3_status.value = "❌ Selecione RT, Squad e Ambiente primeiro"
+                self.s3_status.value = "❌ Selecione todas as opções necessárias primeiro"
                 self.s3_status.color = ft.Colors.RED
         except Exception as e:
             self.s3_status.value = f"❌ Erro ao abrir pasta: {str(e)}"
@@ -976,13 +1092,21 @@ class AWSApp:
             local_path = self.get_local_path()
             s3_path = self.get_s3_path()
 
-            result = subprocess.run([
+            # Construir comando base
+            sync_command = [
                 'aws', 's3', 'sync',
                 s3_path,
                 str(local_path)
-            ], capture_output=True, text=True, check=True)
+            ]
 
-            self.s3_status.value = f"✅ Sincronização concluída: S3 → Local"
+            # Adicionar --delete se checkbox estiver marcado
+            if self.delete_checkbox.value:
+                sync_command.append('--delete')
+
+            result = subprocess.run(sync_command, capture_output=True, text=True, check=True)
+
+            delete_suffix = " (com --delete)" if self.delete_checkbox.value else ""
+            self.s3_status.value = f"✅ Sincronização concluída: S3 → Local{delete_suffix}"
             self.s3_status.color = ft.Colors.GREEN
 
         except subprocess.CalledProcessError as e:
@@ -1180,14 +1304,45 @@ class AWSApp:
                 self.all_jobs = []
                 self.filtered_jobs = []
 
-            # Atualizar barra de status
-            self.refresh_aws_status()
+            # Forçar estado de logout na interface
+            self.status_text.value = "❌ Não logado - Selecione um profile SSO"
+            self.status_text.color = ft.Colors.RED
+            self.login_button.visible = True
+            self.login_button.text = "Login"
+            self.login_button.disabled = True
+            self.logout_button.visible = False
 
-            # Retornar para tela de seleção de profile
-            self.check_login_status()
+            # Atualizar barra de status para estado deslogado
+            self.status_profile_text.value = "Profile: Não logado"
+            self.status_profile_text.color = ft.Colors.GREY_400
+            self.status_account_text.value = "Account ID: N/A"
+            self.status_account_text.color = ft.Colors.GREY_400
 
+            # Atualizar status do monitoring se a aba estiver carregada
+            if hasattr(self, 'monitoring_status'):
+                self.monitoring_status.value = "Faça login primeiro para visualizar jobs"
+                self.monitoring_status.color = ft.Colors.GREY_400
+
+            # Carregar lista de profiles SSO
+            self.load_sso_profiles()
+
+            # Mostrar mensagem de sucesso temporariamente
+            temp_status = self.status_text.value
+            temp_color = self.status_text.color
             self.status_text.value = "✅ Logout realizado com sucesso"
             self.status_text.color = ft.Colors.GREEN
+            self.page.update()
+
+            # Após 2 segundos, restaurar o estado normal
+            def restore_status():
+                self.status_text.value = temp_status
+                self.status_text.color = temp_color
+                self.page.update()
+
+            # Usar timer para restaurar status após 2 segundos
+            timer = threading.Timer(2.0, restore_status)
+            timer.daemon = True
+            timer.start()
 
         except Exception as e:
             self.status_text.value = f"❌ Erro no logout: {str(e)}"
