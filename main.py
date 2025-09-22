@@ -307,8 +307,11 @@ class AWSApp:
         # S3 Tab Content
         self.s3_tab = self.create_s3_tab()
 
-        # Monitoring Tab Content
-        self.monitoring_tab = self.create_monitoring_tab()
+        # Monitoring Glue Tab Content
+        self.monitoring_glue_tab = self.create_monitoring_tab()
+
+        # Monitoring STF Tab Content
+        self.monitoring_stpf_tab = self.create_monitoring_stpf_tab()
 
         # Create Tabs
         tabs = ft.Tabs(
@@ -317,7 +320,8 @@ class AWSApp:
             tabs=[
                 ft.Tab(text="Login", content=self.login_tab),
                 ft.Tab(text="S3", content=self.s3_tab),
-                ft.Tab(text="Monitoring", content=self.monitoring_tab),
+                ft.Tab(text="Monitoring Glue", content=self.monitoring_glue_tab),
+                ft.Tab(text="Monitoring STF", content=self.monitoring_stpf_tab)
             ],
             expand=True,
         )
@@ -720,6 +724,43 @@ class AWSApp:
             expand=True
         )
 
+        # KPIs de jobs (success, failed, running)
+        self.jobs_success = ft.Text("0", size=25, weight=ft.FontWeight.BOLD, color=ft.Colors.GREEN)
+        self.jobs_failed = ft.Text("0", size=25, weight=ft.FontWeight.BOLD, color=ft.Colors.RED)
+        self.jobs_running = ft.Text("0", size=25, weight=ft.FontWeight.BOLD, color=ft.Colors.GREY)
+        self.jobs_dpu_hours = ft.Text("0", size=25, weight=ft.FontWeight.BOLD, color=ft.Colors.YELLOW)
+        self.jobs_time = ft.Text("0", size=25, weight=ft.FontWeight.BOLD, color=ft.Colors.BLUE)
+        self.jobs_flex = ft.Text("0", size=25, weight=ft.FontWeight.BOLD, color=ft.Colors.GREY)
+
+        def build_kpi_container(number_text, label, color, bgcolor):
+            return ft.Container(
+                content=ft.Column([
+                    number_text,
+                    ft.Text(label, size=12, color=color, weight=ft.FontWeight.W_500),
+                ], alignment=ft.MainAxisAlignment.CENTER, horizontal_alignment=ft.CrossAxisAlignment.CENTER),
+                width=120,
+                height=80,
+                bgcolor=bgcolor,
+                border_radius=12,
+                border=ft.border.all(1, ft.Colors.GREY_700),
+                shadow=ft.BoxShadow(
+                    spread_radius=0,
+                    blur_radius=6,
+                    color=ft.Colors.BLACK26,
+                    offset=ft.Offset(0, 2),
+                ),
+                padding=8
+            )
+        
+        self.kpi_row = ft.Row([
+            build_kpi_container(self.jobs_success, "Success", ft.Colors.GREEN, ft.Colors.GREY_800),
+            build_kpi_container(self.jobs_failed, "Failed", ft.Colors.RED, ft.Colors.GREY_800),
+            build_kpi_container(self.jobs_running, "Running", ft.Colors.GREY, ft.Colors.GREY_800),
+            build_kpi_container(self.jobs_dpu_hours, "DPU Hours", ft.Colors.YELLOW, ft.Colors.GREY_800),
+            build_kpi_container(self.jobs_time, "Minutes", ft.Colors.BLUE, ft.Colors.GREY_800),
+            build_kpi_container(self.jobs_flex, "Flex", ft.Colors.GREY, ft.Colors.GREY_800),
+        ], alignment=ft.MainAxisAlignment.SPACE_EVENLY, expand=True)
+
         # Container scrollável para a tabela com estilo aprimorado
         self.table_container = ft.Container(
             content=self.jobs_table,
@@ -805,7 +846,195 @@ class AWSApp:
                     content=ft.Column([
                         ft.Text("Jobs do AWS Glue:", size=14, weight=ft.FontWeight.BOLD, color=ft.Colors.WHITE),
                         ft.Container(height=10),
+                        self.kpi_row,
+                        ft.Container(height=15),
                         self.table_container,
+                    ]),
+                    expand=True
+                ),
+            ],
+            spacing=8,
+            horizontal_alignment=ft.CrossAxisAlignment.STRETCH,
+            scroll=ft.ScrollMode.AUTO
+            ),
+            padding=25,
+            expand=True,
+            bgcolor=ft.Colors.GREY_900
+        )
+
+    def create_monitoring_stpf_tab(self):
+        
+                        
+        # Filtro de busca
+        self.job_filter_stpf = ft.TextField(
+            label="Filtrar stpf (separe por vírgula)",
+            width=300,
+            on_change=self.filter_jobs
+        )
+
+        # Filtro por status
+        self.status_filter_stpf = ft.Dropdown(
+            label="Status",
+            options=[
+                ft.dropdown.Option("TODOS"),
+                ft.dropdown.Option("SUCCEEDED"),
+                ft.dropdown.Option("FAILED"),
+                ft.dropdown.Option("RUNNING"),
+                ft.dropdown.Option("NEVER_RUN"),
+            ],
+            value="TODOS",
+            width=150,
+            on_change=self.filter_jobs
+        )
+
+        # Botão de atualização manual
+        self.refresh_button_stpf = ft.ElevatedButton(
+            "🔄 Atualizar",
+            on_click=self.refresh_jobs,
+            width=130,
+            height=40,
+            style=ft.ButtonStyle(
+                shape=ft.RoundedRectangleBorder(radius=8),
+                elevation=3,
+            )
+        )
+
+        # Progress e status
+        self.monitoring_progress_stpf = ft.ProgressRing(visible=False)
+        self.monitoring_status_sptf = ft.Text(
+            "Faça login primeiro para visualizar stpf",
+            size=14,
+            color=ft.Colors.GREY_400
+        )
+
+        # Última atualização
+        self.last_update_text_stpf = ft.Text(
+            "",
+            size=12,
+            color=ft.Colors.GREY_500
+        )
+
+        # Tabela de STPF
+        self.stpf_table = ft.DataTable(
+            columns=[
+                ft.DataColumn(ft.Text("Name", weight=ft.FontWeight.BOLD)),
+                ft.DataColumn(ft.Text("Status", weight=ft.FontWeight.BOLD)),
+                ft.DataColumn(ft.Text("Última Execução", weight=ft.FontWeight.BOLD)),
+                ft.DataColumn(ft.Text("Duração", weight=ft.FontWeight.BOLD)),
+            ],
+            rows=[],
+            expand=True
+        )
+
+        # KPIs de jobs (success, failed, running)
+        self.stpf_success = ft.Text("0", size=25, weight=ft.FontWeight.BOLD, color=ft.Colors.GREEN)
+        self.stpf_failed = ft.Text("0", size=25, weight=ft.FontWeight.BOLD, color=ft.Colors.RED)
+        self.stpf_running = ft.Text("0", size=25, weight=ft.FontWeight.BOLD, color=ft.Colors.GREY)
+        self.stpf_time = ft.Text("0", size=25, weight=ft.FontWeight.BOLD, color=ft.Colors.BLUE)
+
+        def build_kpi_container(number_text, label, color, bgcolor):
+            return ft.Container(
+                content=ft.Column([
+                    number_text,
+                    ft.Text(label, size=12, color=color, weight=ft.FontWeight.W_500),
+                ], alignment=ft.MainAxisAlignment.CENTER, horizontal_alignment=ft.CrossAxisAlignment.CENTER),
+                width=120,
+                height=80,
+                bgcolor=bgcolor,
+                border_radius=12,
+                border=ft.border.all(1, ft.Colors.GREY_700),
+                shadow=ft.BoxShadow(
+                    spread_radius=0,
+                    blur_radius=6,
+                    color=ft.Colors.BLACK26,
+                    offset=ft.Offset(0, 2),
+                ),
+                padding=8
+            )
+        
+        self.kpi_row_stpf = ft.Row([
+            build_kpi_container(self.stpf_success, "Success", ft.Colors.GREEN, ft.Colors.GREY_800),
+            build_kpi_container(self.stpf_failed, "Failed", ft.Colors.RED, ft.Colors.GREY_800),
+            build_kpi_container(self.stpf_running, "Running", ft.Colors.GREY, ft.Colors.GREY_800),
+            build_kpi_container(self.stpf_time, "Minutes", ft.Colors.BLUE, ft.Colors.GREY_800),
+        ], alignment=ft.MainAxisAlignment.SPACE_EVENLY, expand=True)
+
+        # Container scrollável para a tabela com estilo aprimorado
+        self.table_container_stpf = ft.Container(
+            content=self.stpf_table,
+            expand=True,
+            bgcolor=ft.Colors.GREY_800,
+            border=ft.border.all(1, ft.Colors.GREY_700),
+            border_radius=12,
+            padding=15,
+            shadow=ft.BoxShadow(
+                spread_radius=0,
+                blur_radius=8,
+                color=ft.Colors.BLACK26,
+                offset=ft.Offset(0, 2),
+            )
+        )
+
+        # Inicializar variáveis de controle
+        self.auto_refresh_timer_stpf = None
+        self.refresh_interval_stpf = 60  # 1 minuto em segundos
+        self.all_stpf = []
+        self.filtered_stpf = []
+
+        return ft.Container(
+            content=ft.Column([
+                # Container de controles superiores
+                ft.Container(
+                    content=ft.Column([
+                        ft.Text("Filtros e Controles:", size=16, weight=ft.FontWeight.BOLD, color=ft.Colors.WHITE),
+                        ft.Container(height=10),
+                        ft.Row([
+                            self.job_filter_stpf,
+                            ft.Container(width=15),
+                            self.status_filter_stpf,
+                            ft.Container(width=20),
+                            self.refresh_button_stpf,
+                            self.monitoring_progress_stpf
+                        ], alignment=ft.MainAxisAlignment.START),
+                        ft.Container(height=15)
+                    ]),
+                    padding=ft.padding.all(20),
+                    bgcolor=ft.Colors.GREY_800,
+                    border_radius=12,
+                    border=ft.border.all(1, ft.Colors.GREY_700),
+                    shadow=ft.BoxShadow(
+                        spread_radius=0,
+                        blur_radius=8,
+                        color=ft.Colors.BLACK26,
+                        offset=ft.Offset(0, 2),
+                    )
+                ),
+
+                ft.Container(height=15),
+
+                # # Container de status
+                # ft.Container(
+                #     content=ft.Row([
+                #         self.monitoring_status_stpf,
+                #         ft.Container(expand=True),
+                #         self.last_update_text_stpf
+                #     ], alignment=ft.MainAxisAlignment.SPACE_BETWEEN),
+                #     padding=ft.padding.symmetric(horizontal=20, vertical=12),
+                #     bgcolor=ft.Colors.GREY_800,
+                #     border_radius=8,
+                #     border=ft.border.all(1, ft.Colors.GREY_700),
+                # ),
+
+                ft.Container(height=15),
+
+                # Container da tabela
+                ft.Container(
+                    content=ft.Column([
+                        ft.Text("Step Functions:", size=14, weight=ft.FontWeight.BOLD, color=ft.Colors.WHITE),
+                        ft.Container(height=10),
+                        self.kpi_row_stpf,
+                        ft.Container(height=15),
+                        self.table_container_stpf,
                     ]),
                     expand=True
                 ),
@@ -974,14 +1203,20 @@ class AWSApp:
                                 duration_str = str(duration).split('.')[0]  # Remove microseconds
                             elif start_time and status == 'RUNNING':
                                 duration = datetime.now(timezone.utc) - start_time
-                                duration_str = f"{str(duration).split('.')[0]} (em execução)"
+                                duration_str = f"{str(duration).split('.')[0]} (em execução)" # Sem microseconds
                             else:
                                 duration_str = "N/A"
+                            
+                            # Variaveis de execução
+                            dpuhours = round(last_execution["DPUSeconds"] / 60 / 60, 2)
+                            glue_type = last_execution["ExecutionClass"]
                         else:
                             status = "NEVER_RUN"
                             started_on_str = "Nunca executado"
                             duration_str = "N/A"
                             start_time = None
+                            dpuhours = 0
+                            glue_type = ""
 
                     except Exception as e:
                         status = "ERROR"
@@ -994,7 +1229,9 @@ class AWSApp:
                         'status': status,
                         'last_execution': started_on_str,
                         'duration': duration_str,
-                        'start_time_obj': start_time  # Para ordenação
+                        'start_time_obj': start_time,  # Para ordenação
+                        "dpuhours": dpuhours,
+                        "glue_type": glue_type
                     })
 
             return jobs
@@ -1088,17 +1325,47 @@ class AWSApp:
         """Atualiza a tabela de jobs com os dados filtrados"""
         self.jobs_table.rows.clear()
 
+        # Contadores
+        success_count = 0
+        failed_count = 0
+        running_count = 0
+        total_dpu_hours = 0.0
+        total_minutes = 0.0
+        total_flex = 0
+
         for job in self.filtered_jobs:
             # Definir cor do status
             status_color = ft.Colors.GREY
             if job['status'] == 'SUCCEEDED':
                 status_color = ft.Colors.GREEN
+                success_count += 1
             elif job['status'] == 'FAILED':
                 status_color = ft.Colors.RED
+                failed_count += 1
             elif job['status'] == 'RUNNING':
                 status_color = ft.Colors.YELLOW
+                running_count += 1
             elif job['status'] == 'NEVER_RUN':
                 status_color = ft.Colors.BLUE
+
+            # Calcular métricas de tempo
+            duration = job.get("duration", "N/A")
+            if isinstance(duration, str) and duration != "N/A" and job["status"] != "RUNNING":
+                # Duração vem no formato "HH:MM:SS"
+                try:
+                    h, m, s = map(int, duration.split()[0].split(":"))
+                    minutes = h * 60 + m + s / 60
+                    total_minutes += minutes
+                except:
+                    pass
+
+            # DPUs na execução
+            if job.get("dpuhours"):
+                total_dpu_hours += job["dpuhours"]
+            
+            # Calcula quantidade flex
+            if job.get("glue_type") and job.get("glue_type") == "FLEX":
+                total_flex += 1
 
             row = ft.DataRow(
                 cells=[
@@ -1109,6 +1376,13 @@ class AWSApp:
                 ]
             )
             self.jobs_table.rows.append(row)
+
+        self.jobs_success.value = str(success_count)
+        self.jobs_failed = str(failed_count)
+        self.jobs_running = str(running_count)
+        self.jobs_dpu_hours = str(total_dpu_hours)
+        self.jobs_time = str(total_minutes)
+        self.jobs_flex = str(total_flex)
 
         if hasattr(self, 'page'):
             self.page.update()
