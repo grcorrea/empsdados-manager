@@ -49,5 +49,9 @@
       "config.txt"
     ],
     "default_profile": "default"
+  },
+  "filters": {
+    "glue_monitoring": "job_pagamento",
+    "stp_monitoring": ""
   }
 }

@@ -8,9 +8,12 @@ import json
 import threading
 import time
 import ctypes
-from datetime import datetime, timezone
+import pyperclip
+import pandas as pd
+from datetime import datetime, timezone, timedelta
 from pathlib import Path
 from botocore.exceptions import ClientError, NoCredentialsError, ProfileNotFound
+from concurrent.futures import ThreadPoolExecutor, as_completed
 
 
 class AWSApp:
@@ -131,6 +134,26 @@ class AWSApp:
                     "default_profile": "default"
                 }
             }
+
+    def save_config(self):
+        """Salva configurações no arquivo config.json"""
+        try:
+            config_path = Path(__file__).parent / "config.json"
+            with open(config_path, 'w', encoding='utf-8') as f:
+                json.dump(self.config, f, indent=2, ensure_ascii=False)
+        except Exception as e:
+            print(f"Erro ao salvar configurações: {e}")
+
+    def save_filter_text(self, filter_type, text):
+        """Salva texto do filtro na configuração"""
+        if "filters" not in self.config:
+            self.config["filters"] = {}
+        self.config["filters"][filter_type] = text
+        self.save_config()
+
+    def load_filter_text(self, filter_type):
+        """Carrega texto do filtro da configuração"""
+        return self.config.get("filters", {}).get(filter_type, "")
 
     def setup_page(self):
         app_config = self.config.get("app", {})
@@ -313,8 +336,8 @@ class AWSApp:
         # Monitoring STF Tab Content
         self.monitoring_stpf_tab = self.create_monitoring_stpf_tab()
 
-        # Create Tabs
-        tabs = ft.Tabs(
+        # Create Tabs com handler para detectar mudança
+        self.tabs = ft.Tabs(
             selected_index=0,
             animation_duration=300,
             tabs=[
@@ -324,15 +347,46 @@ class AWSApp:
                 ft.Tab(text="Monitoring STF", content=self.monitoring_stpf_tab)
             ],
             expand=True,
+            on_change=self.on_tab_change,
         )
 
         # Layout principal com abas e barra de status
         main_layout = ft.Column([
-            tabs,
+            self.tabs,
             self.status_bar
         ], expand=True, spacing=0)
 
         self.page.add(main_layout)
+
+    def on_tab_change(self, e):
+        """Handler chamado quando uma aba é selecionada"""
+        try:
+            selected_index = e.control.selected_index
+            tab_names = ["Login", "S3", "Monitoring Glue", "Monitoring STF"]
+
+            if selected_index < len(tab_names):
+                tab_name = tab_names[selected_index]
+                print(f"[TAB] Aba selecionada: {tab_name}")
+
+                # Verificar cache apenas para abas de monitoring
+                if tab_name == "Monitoring Glue":
+                    # Adicionar um pequeno delay para garantir que a UI foi atualizada
+                    def load_cache():
+                        time.sleep(0.1)  # Pequeno delay
+                        self.check_and_load_cache_on_tab_open("glue")
+
+                    threading.Thread(target=load_cache, daemon=True).start()
+
+                elif tab_name == "Monitoring STF":
+                    # Adicionar um pequeno delay para garantir que a UI foi atualizada
+                    def load_cache():
+                        time.sleep(0.1)  # Pequeno delay
+                        self.check_and_load_cache_on_tab_open("stpf")
+
+                    threading.Thread(target=load_cache, daemon=True).start()
+
+        except Exception as ex:
+            print(f"[ERROR] Erro no handler de mudanca de aba: {ex}")
 
     def create_login_tab(self):
         self.status_text = ft.Text(
@@ -643,6 +697,7 @@ class AWSApp:
         self.job_filter = ft.TextField(
             label="Filtrar jobs (separe por vírgula)",
             width=300,
+            value=self.load_filter_text("glue_monitoring"),
             on_change=self.filter_jobs
         )
 
@@ -661,7 +716,7 @@ class AWSApp:
             on_change=self.filter_jobs
         )
 
-        # Controles de atualização automática
+        # Controles de atualização automática - apenas horas
         self.auto_refresh_enabled = ft.Checkbox(
             label="Atualização automática",
             value=False,
@@ -669,19 +724,12 @@ class AWSApp:
         )
 
         self.refresh_hours = ft.TextField(
-            label="Horas",
-            value="0",
-            width=80,
-            text_align=ft.TextAlign.CENTER,
-            on_change=self.update_refresh_interval
-        )
-
-        self.refresh_minutes = ft.TextField(
-            label="Min",
+            label="Horas para filtro",
             value="1",
-            width=80,
+            width=120,
             text_align=ft.TextAlign.CENTER,
-            on_change=self.update_refresh_interval
+            on_change=self.update_refresh_interval,
+            tooltip="Jobs executados nas últimas X horas"
         )
 
 
@@ -694,6 +742,31 @@ class AWSApp:
             style=ft.ButtonStyle(
                 shape=ft.RoundedRectangleBorder(radius=8),
                 elevation=3,
+            )
+        )
+
+        # Botões de exportação
+        self.copy_jobs_button = ft.IconButton(
+            icon=ft.Icons.COPY,
+            tooltip="Copiar tabela para clipboard",
+            on_click=self.copy_jobs_to_clipboard,
+            icon_size=20,
+            style=ft.ButtonStyle(
+                bgcolor=ft.Colors.BLUE_600,
+                color=ft.Colors.WHITE,
+                shape=ft.RoundedRectangleBorder(radius=8),
+            )
+        )
+
+        self.export_jobs_button = ft.IconButton(
+            icon=ft.Icons.FILE_DOWNLOAD,
+            tooltip="Exportar tabela para Excel",
+            on_click=self.export_jobs_to_excel,
+            icon_size=20,
+            style=ft.ButtonStyle(
+                bgcolor=ft.Colors.GREEN_600,
+                color=ft.Colors.WHITE,
+                shape=ft.RoundedRectangleBorder(radius=8),
             )
         )
 
@@ -783,6 +856,11 @@ class AWSApp:
         self.all_jobs = []
         self.filtered_jobs = []
 
+        # Configurar pasta de cache
+        self.cache_dir = Path(os.path.expandvars("%localappdata%")) / "empsdados-manager"
+        self.glue_cache_file = self.cache_dir / "glue_cache.json"
+        self.stpf_cache_file = self.cache_dir / "stpf_cache.json"
+
         return ft.Container(
             content=ft.Column([
                 # Container de controles superiores
@@ -796,7 +874,11 @@ class AWSApp:
                             self.status_filter,
                             ft.Container(width=20),
                             self.refresh_button,
-                            self.monitoring_progress
+                            self.monitoring_progress,
+                            ft.Container(width=15),
+                            self.copy_jobs_button,
+                            ft.Container(width=5),
+                            self.export_jobs_button
                         ], alignment=ft.MainAxisAlignment.START),
 
                         ft.Container(height=15),
@@ -805,11 +887,9 @@ class AWSApp:
                         ft.Row([
                             self.auto_refresh_enabled,
                             ft.Container(width=15),
-                            ft.Text("Intervalo:", size=14, color=ft.Colors.WHITE),
+                            ft.Text("Filtrar últimas:", size=14, color=ft.Colors.WHITE),
                             self.refresh_hours,
-                            ft.Text("h", size=14, color=ft.Colors.WHITE),
-                            self.refresh_minutes,
-                            ft.Text("min", size=14, color=ft.Colors.WHITE),
+                            ft.Text("horas", size=14, color=ft.Colors.WHITE),
                         ], alignment=ft.MainAxisAlignment.START),
                     ]),
                     padding=ft.padding.all(20),
@@ -863,13 +943,13 @@ class AWSApp:
         )
 
     def create_monitoring_stpf_tab(self):
-        
-                        
+
         # Filtro de busca
         self.job_filter_stpf = ft.TextField(
-            label="Filtrar stpf (separe por vírgula)",
+            label="Filtrar Step Functions (separe por vírgula)",
             width=300,
-            on_change=self.filter_jobs
+            value=self.load_filter_text("stp_monitoring"),
+            on_change=self.filter_stpf_jobs
         )
 
         # Filtro por status
@@ -884,18 +964,59 @@ class AWSApp:
             ],
             value="TODOS",
             width=150,
-            on_change=self.filter_jobs
+            on_change=self.filter_stpf_jobs
+        )
+
+        # Controles de atualização automática STF - apenas horas
+        self.auto_refresh_enabled_stpf = ft.Checkbox(
+            label="Atualização automática",
+            value=False,
+            on_change=self.toggle_auto_refresh_stpf
+        )
+
+        self.refresh_hours_stpf = ft.TextField(
+            label="Horas para filtro",
+            value="1",
+            width=120,
+            text_align=ft.TextAlign.CENTER,
+            on_change=self.update_refresh_interval_stpf,
+            tooltip="Step Functions executadas nas últimas X horas"
         )
 
         # Botão de atualização manual
         self.refresh_button_stpf = ft.ElevatedButton(
             "🔄 Atualizar",
-            on_click=self.refresh_jobs,
+            on_click=self.refresh_stpf_jobs,
             width=130,
             height=40,
             style=ft.ButtonStyle(
                 shape=ft.RoundedRectangleBorder(radius=8),
                 elevation=3,
+            )
+        )
+
+        # Botões de exportação para STP
+        self.copy_stpf_button = ft.IconButton(
+            icon=ft.Icons.COPY,
+            tooltip="Copiar tabela para clipboard",
+            on_click=self.copy_stpf_to_clipboard,
+            icon_size=20,
+            style=ft.ButtonStyle(
+                bgcolor=ft.Colors.BLUE_600,
+                color=ft.Colors.WHITE,
+                shape=ft.RoundedRectangleBorder(radius=8),
+            )
+        )
+
+        self.export_stpf_button = ft.IconButton(
+            icon=ft.Icons.FILE_DOWNLOAD,
+            tooltip="Exportar tabela para Excel",
+            on_click=self.export_stpf_to_excel,
+            icon_size=20,
+            style=ft.ButtonStyle(
+                bgcolor=ft.Colors.GREEN_600,
+                color=ft.Colors.WHITE,
+                shape=ft.RoundedRectangleBorder(radius=8),
             )
         )
 
@@ -975,9 +1096,10 @@ class AWSApp:
             )
         )
 
-        # Inicializar variáveis de controle
+        # Inicializar variáveis de controle STF
         self.auto_refresh_timer_stpf = None
-        self.refresh_interval_stpf = 60  # 1 minuto em segundos
+        self.refresh_interval_stpf = 3600  # 1 hora em segundos
+        self.filter_hours_stpf = 1  # Filtrar por 1 hora por padrão
         self.all_stpf = []
         self.filtered_stpf = []
 
@@ -994,9 +1116,23 @@ class AWSApp:
                             self.status_filter_stpf,
                             ft.Container(width=20),
                             self.refresh_button_stpf,
-                            self.monitoring_progress_stpf
+                            self.monitoring_progress_stpf,
+                            ft.Container(width=15),
+                            self.copy_stpf_button,
+                            ft.Container(width=5),
+                            self.export_stpf_button
                         ], alignment=ft.MainAxisAlignment.START),
-                        ft.Container(height=15)
+
+                        ft.Container(height=15),
+
+                        # Controles de atualização automática
+                        ft.Row([
+                            self.auto_refresh_enabled_stpf,
+                            ft.Container(width=15),
+                            ft.Text("Filtrar últimas:", size=14, color=ft.Colors.WHITE),
+                            self.refresh_hours_stpf,
+                            ft.Text("horas", size=14, color=ft.Colors.WHITE),
+                        ], alignment=ft.MainAxisAlignment.START),
                     ]),
                     padding=ft.padding.all(20),
                     bgcolor=ft.Colors.GREY_800,
@@ -1012,20 +1148,25 @@ class AWSApp:
 
                 ft.Container(height=15),
 
-                # # Container de status
-                # ft.Container(
-                #     content=ft.Row([
-                #         self.monitoring_status_stpf,
-                #         ft.Container(expand=True),
-                #         self.last_update_text_stpf
-                #     ], alignment=ft.MainAxisAlignment.SPACE_BETWEEN),
-                #     padding=ft.padding.symmetric(horizontal=20, vertical=12),
-                #     bgcolor=ft.Colors.GREY_800,
-                #     border_radius=8,
-                #     border=ft.border.all(1, ft.Colors.GREY_700),
-                # ),
+                # Container de status e atualização
+                ft.Container(
+                    content=ft.Row([
+                        self.monitoring_status_sptf,
+                        ft.Container(expand=True),
+                        self.last_update_text_stpf
+                    ], alignment=ft.MainAxisAlignment.SPACE_BETWEEN),
+                    padding=ft.padding.symmetric(horizontal=20, vertical=12),
+                    bgcolor=ft.Colors.GREY_800,
+                    border_radius=8,
+                    border=ft.border.all(1, ft.Colors.GREY_700),
+                    shadow=ft.BoxShadow(
+                        spread_radius=0,
+                        blur_radius=8,
+                        color=ft.Colors.BLACK26,
+                        offset=ft.Offset(0, 2),
+                    )
+                ),
 
-                ft.Container(height=15),
 
                 # Container da tabela
                 ft.Container(
@@ -1161,83 +1302,159 @@ class AWSApp:
         if hasattr(self, 'page'):
             self.page.update()
 
-    def fetch_glue_jobs(self):
-        """Busca jobs do AWS Glue e seus status"""
+    def fetch_single_job_details(self, glue_client, job_name):
+        """Busca detalhes de um único job Glue (para processamento paralelo)"""
+        try:
+            runs_response = glue_client.get_job_runs(
+                JobName=job_name,
+                MaxResults=1
+            )
+
+            if runs_response['JobRuns']:
+                last_run = runs_response['JobRuns'][0]
+                status = last_run['JobRunState']
+
+                # Formatear tempo de execução
+                start_time = last_run.get('StartedOn')
+                end_time = last_run.get('CompletedOn')
+
+                if start_time:
+                    started_on_str = start_time.strftime("%Y-%m-%d %H:%M:%S")
+                else:
+                    started_on_str = "N/A"
+
+                # Calcular duração
+                if start_time and end_time:
+                    duration = end_time - start_time
+                    duration_str = str(duration).split('.')[0]  # Remove microseconds
+                elif start_time and status == 'RUNNING':
+                    duration = datetime.now(timezone.utc) - start_time
+                    duration_str = f"{str(duration).split('.')[0]} (em execução)"
+                else:
+                    duration_str = "N/A"
+
+                # Variáveis de execução
+                try:
+                    dpuhours = round(last_run.get("DPUSeconds", 0) / 3600, 2)
+                    glue_type = last_run.get("ExecutionClass", "")
+                except:
+                    dpuhours = 0
+                    glue_type = ""
+            else:
+                status = "NEVER_RUN"
+                started_on_str = "Nunca executado"
+                duration_str = "N/A"
+                start_time = None
+                dpuhours = 0
+                glue_type = ""
+
+            return {
+                'name': job_name,
+                'status': status,
+                'last_execution': started_on_str,
+                'duration': duration_str,
+                'start_time_obj': start_time,
+                "dpuhours": dpuhours,
+                "glue_type": glue_type
+            }
+
+        except Exception as e:
+            return {
+                'name': job_name,
+                'status': "ERROR",
+                'last_execution': f"Erro: {str(e)}",
+                'duration': "N/A",
+                'start_time_obj': None,
+                "dpuhours": 0,
+                "glue_type": ""
+            }
+
+    def fetch_glue_jobs(self, max_jobs=None):
+        """Busca jobs do AWS Glue e seus status usando processamento paralelo otimizado"""
         try:
             if not self.current_account_id:
                 return []
 
             glue_client = boto3.client('glue')
 
-            # Buscar todos os jobs
+            # 1. Buscar todos os jobs (rápido)
+            print("🔍 Listando jobs do Glue...")
             paginator = glue_client.get_paginator('get_jobs')
-            jobs = []
+            all_job_names = []
 
             for page in paginator.paginate():
                 for job in page['Jobs']:
-                    job_name = job['Name']
+                    all_job_names.append(job['Name'])
 
-                    # Buscar última execução do job
+                    # Limitação para contas com muitos jobs
+                    if max_jobs and len(all_job_names) >= max_jobs:
+                        print(f"⚠️  Limitando a {max_jobs} jobs para melhor performance")
+                        break
+
+                if max_jobs and len(all_job_names) >= max_jobs:
+                    break
+
+            if not all_job_names:
+                print("📋 Nenhum job encontrado na conta")
+                return []
+
+            print(f"📋 Encontrados {len(all_job_names)} jobs Glue. Iniciando busca paralela...")
+
+            # Update UI with job count
+            if hasattr(self, 'monitoring_status'):
+                try:
+                    self.monitoring_status.value = f"🔄 Encontrados {len(all_job_names)} jobs. Carregando detalhes..."
+                    self.page.update()
+                except:
+                    pass
+
+            # 2. Buscar detalhes em paralelo (otimizado)
+            jobs = []
+            max_workers = min(15, max(5, len(all_job_names) // 4))  # Threads adaptáveis
+
+            start_time = time.time()
+
+            with ThreadPoolExecutor(max_workers=max_workers) as executor:
+                # Criar client separado para cada thread (recomendação AWS)
+                future_to_job = {
+                    executor.submit(self.fetch_single_job_details, boto3.client('glue'), job_name): job_name
+                    for job_name in all_job_names
+                }
+
+                completed = 0
+                for future in as_completed(future_to_job):
                     try:
-                        runs_response = glue_client.get_job_runs(
-                            JobName=job_name,
-                            MaxResults=1
-                        )
+                        job_data = future.result()
+                        jobs.append(job_data)
+                        completed += 1
 
-                        if runs_response['JobRuns']:
-                            last_run = runs_response['JobRuns'][0]
-                            status = last_run['JobRunState']
+                        # Update progress mais frequentemente
+                        if completed % 5 == 0 or completed == len(all_job_names):
+                            progress_percent = (completed / len(all_job_names)) * 100
+                            elapsed = time.time() - start_time
+                            jobs_per_sec = completed / elapsed if elapsed > 0 else 0
 
-                            # Formatear tempo de execução
-                            start_time = last_run.get('StartedOn')
-                            end_time = last_run.get('CompletedOn')
+                            print(f"⏳ Progresso: {completed}/{len(all_job_names)} ({progress_percent:.1f}%) - {jobs_per_sec:.1f} jobs/s")
 
-                            if start_time:
-                                started_on_str = start_time.strftime("%Y-%m-%d %H:%M:%S")
-                            else:
-                                started_on_str = "N/A"
-
-                            # Calcular duração
-                            if start_time and end_time:
-                                duration = end_time - start_time
-                                duration_str = str(duration).split('.')[0]  # Remove microseconds
-                            elif start_time and status == 'RUNNING':
-                                duration = datetime.now(timezone.utc) - start_time
-                                duration_str = f"{str(duration).split('.')[0]} (em execução)" # Sem microseconds
-                            else:
-                                duration_str = "N/A"
-                            
-                            # Variaveis de execução
-                            dpuhours = round(last_execution["DPUSeconds"] / 60 / 60, 2)
-                            glue_type = last_execution["ExecutionClass"]
-                        else:
-                            status = "NEVER_RUN"
-                            started_on_str = "Nunca executado"
-                            duration_str = "N/A"
-                            start_time = None
-                            dpuhours = 0
-                            glue_type = ""
+                            # Update UI progress
+                            if hasattr(self, 'monitoring_status'):
+                                try:
+                                    eta_remaining = (len(all_job_names) - completed) / jobs_per_sec if jobs_per_sec > 0 else 0
+                                    self.monitoring_status.value = f"🔄 {completed}/{len(all_job_names)} ({progress_percent:.0f}%) - ETA: {eta_remaining:.0f}s"
+                                    self.page.update()
+                                except:
+                                    pass
 
                     except Exception as e:
-                        status = "ERROR"
-                        started_on_str = f"Erro: {str(e)}"
-                        duration_str = "N/A"
-                        start_time = None
+                        job_name = future_to_job[future]
+                        print(f"❌ Erro ao buscar detalhes do job {job_name}: {e}")
 
-                    jobs.append({
-                        'name': job_name,
-                        'status': status,
-                        'last_execution': started_on_str,
-                        'duration': duration_str,
-                        'start_time_obj': start_time,  # Para ordenação
-                        "dpuhours": dpuhours,
-                        "glue_type": glue_type
-                    })
-
+            total_time = time.time() - start_time
+            print(f"✅ Carregamento concluído! {len(jobs)} jobs processados em {total_time:.1f}s")
             return jobs
 
         except Exception as e:
-            print(f"Erro ao buscar jobs do Glue: {e}")
+            print(f"❌ Erro ao buscar jobs do Glue: {e}")
             return []
 
     def refresh_jobs(self, e=None):
@@ -1257,15 +1474,26 @@ class AWSApp:
         try:
             # Buscar jobs em thread separada para não bloquear UI
             def fetch_in_background():
-                jobs = self.fetch_glue_jobs()
+                # Opção de limitar jobs para contas com muitos jobs (opcional)
+                max_jobs_limit = getattr(self, 'max_glue_jobs', 200)  # Limitar a 200 jobs por padrão
+                jobs = self.fetch_glue_jobs(max_jobs=max_jobs_limit)
 
                 # Atualizar UI na thread principal
                 def update_ui():
                     self.all_jobs = jobs
                     self.filter_jobs()  # Aplicar filtro atual
 
+                    # Salvar cache após carregar dados
+                    if jobs:
+                        self.save_glue_cache(jobs)
+
                     self.last_update_text.value = f"Última atualização: {datetime.now().strftime('%H:%M:%S')}"
-                    self.monitoring_status.value = f"✅ {len(jobs)} jobs encontrados"
+
+                    if len(jobs) >= max_jobs_limit:
+                        self.monitoring_status.value = f"✅ {len(jobs)} jobs carregados (limitado a {max_jobs_limit})"
+                    else:
+                        self.monitoring_status.value = f"✅ {len(jobs)} jobs encontrados"
+
                     self.monitoring_status.color = ft.Colors.GREEN
 
                     self.monitoring_progress.visible = False
@@ -1286,12 +1514,27 @@ class AWSApp:
             self.page.update()
 
     def filter_jobs(self, e=None):
-        """Filtra jobs baseado no texto de busca e status selecionado"""
+        """Filtra jobs baseado no texto de busca, status e data de execução"""
         filter_text = self.job_filter.value if self.job_filter.value else ""
+        # Salvar texto do filtro na configuração
+        self.save_filter_text("glue_monitoring", filter_text)
         status_filter = self.status_filter.value if hasattr(self, 'status_filter') else "TODOS"
 
         # Começar com todos os jobs
         filtered_by_name = self.all_jobs.copy()
+
+        # Aplicar filtro por data se atualização automática estiver ativa
+        if hasattr(self, 'auto_refresh_enabled') and self.auto_refresh_enabled.value:
+            hours_to_filter = getattr(self, 'filter_hours', 1)
+            cutoff_time = datetime.now(timezone.utc) - timedelta(hours=hours_to_filter)
+
+            # Filtrar apenas jobs executados nas últimas X horas
+            filtered_by_time = []
+            for job in self.all_jobs:
+                if job.get('start_time_obj') and job['start_time_obj'] >= cutoff_time:
+                    filtered_by_time.append(job)
+
+            filtered_by_name = filtered_by_time
 
         # Aplicar filtro por nome se houver texto
         if filter_text.strip():
@@ -1299,12 +1542,14 @@ class AWSApp:
             filter_terms = [term.strip().lower() for term in filter_text.split(',') if term.strip()]
 
             # Filtrar jobs que contenham qualquer um dos termos
-            filtered_by_name = []
-            for job in self.all_jobs:
+            filtered_by_name_and_text = []
+            for job in filtered_by_name:
                 job_name_lower = job['name'].lower()
                 # Se qualquer termo for encontrado no nome do job, incluir
                 if any(term in job_name_lower for term in filter_terms):
-                    filtered_by_name.append(job)
+                    filtered_by_name_and_text.append(job)
+
+            filtered_by_name = filtered_by_name_and_text
 
         # Aplicar filtro por status
         if status_filter and status_filter != "TODOS":
@@ -1388,21 +1633,366 @@ class AWSApp:
             self.page.update()
 
     def update_refresh_interval(self, e=None):
-        """Atualiza o intervalo de atualização automática"""
+        """Atualiza o intervalo de atualização automática e filtro por horas"""
         try:
-            hours = int(self.refresh_hours.value or 0)
-            minutes = int(self.refresh_minutes.value or 0)
+            hours = int(self.refresh_hours.value or 1)
 
-            self.refresh_interval = hours * 3600 + minutes * 60
+            # Intervalo fixo de 1 hora para atualização automática
+            self.refresh_interval = 3600  # 1 hora em segundos
+            self.filter_hours = hours  # Horas para filtro
 
             # Reiniciar timer se atualização automática estiver ativa
             if self.auto_refresh_enabled.value and self.auto_refresh_timer:
                 self.stop_auto_refresh()
                 self.start_auto_refresh()
 
+            # Aplicar filtro se já temos dados
+            if hasattr(self, 'all_jobs') and self.all_jobs:
+                self.filter_jobs()
+
         except ValueError:
-            # Se valores inválidos, usar padrão de 1 minuto
-            self.refresh_interval = 60
+            # Se valores inválidos, usar padrão
+            self.refresh_interval = 3600  # 1 hora
+            self.filter_hours = 1
+
+    def update_refresh_interval_stpf(self, e=None):
+        """Atualiza o intervalo de atualização automática e filtro por horas para STF"""
+        try:
+            hours = int(self.refresh_hours_stpf.value or 1)
+
+            # Intervalo fixo de 1 hora para atualização automática
+            self.refresh_interval_stpf = 3600  # 1 hora em segundos
+            self.filter_hours_stpf = hours  # Horas para filtro
+
+            # Reiniciar timer se atualização automática estiver ativa
+            if self.auto_refresh_enabled_stpf.value and self.auto_refresh_timer_stpf:
+                self.stop_auto_refresh_stpf()
+                self.start_auto_refresh_stpf()
+
+            # Aplicar filtro se já temos dados
+            if hasattr(self, 'all_stpf') and self.all_stpf:
+                self.filter_stpf_jobs()
+
+        except ValueError:
+            # Se valores inválidos, usar padrão
+            self.refresh_interval_stpf = 3600  # 1 hora
+            self.filter_hours_stpf = 1
+
+    def filter_stpf_jobs(self, e=None):
+        """Filtra Step Functions baseado no texto de busca, status e data de execução"""
+        filter_text = self.job_filter_stpf.value if self.job_filter_stpf.value else ""
+        # Salvar texto do filtro na configuração
+        self.save_filter_text("stp_monitoring", filter_text)
+        status_filter = self.status_filter_stpf.value if hasattr(self, 'status_filter_stpf') else "TODOS"
+
+        # Começar com todos os jobs
+        filtered_by_name = self.all_stpf.copy()
+
+        # Aplicar filtro por data se atualização automática estiver ativa
+        if hasattr(self, 'auto_refresh_enabled_stpf') and self.auto_refresh_enabled_stpf.value:
+            hours_to_filter = getattr(self, 'filter_hours_stpf', 1)
+            cutoff_time = datetime.now(timezone.utc) - timedelta(hours=hours_to_filter)
+
+            # Filtrar apenas jobs executados nas últimas X horas
+            filtered_by_time = []
+            for job in self.all_stpf:
+                if job.get('start_time_obj') and job['start_time_obj'] >= cutoff_time:
+                    filtered_by_time.append(job)
+
+            filtered_by_name = filtered_by_time
+
+        # Aplicar filtro por nome se houver texto
+        if filter_text.strip():
+            # Dividir por vírgula e limpar espaços
+            filter_terms = [term.strip().lower() for term in filter_text.split(',') if term.strip()]
+
+            # Filtrar jobs que contenham qualquer um dos termos
+            filtered_by_name_and_text = []
+            for job in filtered_by_name:
+                job_name_lower = job['name'].lower()
+                # Se qualquer termo for encontrado no nome do job, incluir
+                if any(term in job_name_lower for term in filter_terms):
+                    filtered_by_name_and_text.append(job)
+
+            filtered_by_name = filtered_by_name_and_text
+
+        # Aplicar filtro por status
+        if status_filter and status_filter != "TODOS":
+            self.filtered_stpf = [job for job in filtered_by_name if job['status'] == status_filter]
+        else:
+            self.filtered_stpf = filtered_by_name
+
+        # Ordenar por data de execução (mais recente primeiro)
+        self.filtered_stpf.sort(key=lambda job: (
+            job.get('start_time_obj') is not None,  # True para jobs executados, False para nunca executados
+            job.get('start_time_obj') or datetime.min.replace(tzinfo=timezone.utc)  # Data para ordenação
+        ), reverse=True)
+
+        self.update_stpf_table()
+
+    def refresh_stpf_jobs(self, e=None):
+        """Atualiza a lista de Step Functions"""
+        if not self.current_account_id:
+            self.monitoring_status_sptf.value = "Faça login primeiro para visualizar Step Functions"
+            self.monitoring_status_sptf.color = ft.Colors.RED
+            self.page.update()
+            return
+
+        self.monitoring_progress_stpf.visible = True
+        self.refresh_button_stpf.disabled = True
+        self.monitoring_status_sptf.value = "Carregando Step Functions..."
+        self.monitoring_status_sptf.color = ft.Colors.ORANGE
+        self.page.update()
+
+        try:
+            # Buscar jobs em thread separada para não bloquear UI
+            def fetch_in_background():
+                jobs = self.fetch_step_functions()
+
+                # Atualizar UI na thread principal
+                def update_ui():
+                    self.all_stpf = jobs
+                    self.filter_stpf_jobs()  # Aplicar filtro atual
+
+                    # Salvar cache após carregar dados
+                    if jobs:
+                        self.save_stpf_cache(jobs)
+
+                    self.last_update_text_stpf.value = f"Última atualização: {datetime.now().strftime('%H:%M:%S')}"
+                    self.monitoring_status_sptf.value = f"✅ {len(jobs)} Step Functions encontradas"
+                    self.monitoring_status_sptf.color = ft.Colors.GREEN
+
+                    self.monitoring_progress_stpf.visible = False
+                    self.refresh_button_stpf.disabled = False
+                    self.page.update()
+
+                # Executar atualização da UI na thread principal
+                self.page.run_thread(update_ui)
+
+            # Executar busca em background
+            threading.Thread(target=fetch_in_background, daemon=True).start()
+
+        except Exception as e:
+            self.monitoring_status_sptf.value = f"❌ Erro: {str(e)}"
+            self.monitoring_status_sptf.color = ft.Colors.RED
+            self.monitoring_progress_stpf.visible = False
+            self.refresh_button_stpf.disabled = False
+            self.page.update()
+
+    def fetch_step_functions(self):
+        """Busca Step Functions do AWS e seus status"""
+        try:
+            if not self.current_account_id:
+                return []
+
+            sfn_client = boto3.client('stepfunctions')
+
+            # Buscar todas as state machines
+            paginator = sfn_client.get_paginator('list_state_machines')
+            state_machines = []
+
+            for page in paginator.paginate():
+                for sm in page['stateMachines']:
+                    sm_name = sm['name']
+                    sm_arn = sm['stateMachineArn']
+
+                    # Buscar última execução da state machine
+                    try:
+                        executions_response = sfn_client.list_executions(
+                            stateMachineArn=sm_arn,
+                            maxResults=1
+                        )
+
+                        if executions_response['executions']:
+                            last_execution = executions_response['executions'][0]
+                            status = last_execution['status']
+                            start_time = last_execution.get('startDate')
+                            stop_time = last_execution.get('stopDate')
+
+                            if start_time:
+                                started_on_str = start_time.strftime("%Y-%m-%d %H:%M:%S")
+                            else:
+                                started_on_str = "N/A"
+
+                            # Calcular duração
+                            if start_time and stop_time:
+                                duration = stop_time - start_time
+                                duration_str = str(duration).split('.')[0]  # Remove microseconds
+                            elif start_time and status == 'RUNNING':
+                                duration = datetime.now(timezone.utc) - start_time
+                                duration_str = f"{str(duration).split('.')[0]} (em execução)"
+                            else:
+                                duration_str = "N/A"
+                        else:
+                            status = "NEVER_RUN"
+                            started_on_str = "Nunca executado"
+                            duration_str = "N/A"
+                            start_time = None
+
+                    except Exception as e:
+                        status = "ERROR"
+                        started_on_str = f"Erro: {str(e)}"
+                        duration_str = "N/A"
+                        start_time = None
+
+                    state_machines.append({
+                        'name': sm_name,
+                        'status': status,
+                        'last_execution': started_on_str,
+                        'duration': duration_str,
+                        'start_time_obj': start_time  # Para ordenação
+                    })
+
+            return state_machines
+
+        except Exception as e:
+            print(f"Erro ao buscar Step Functions: {e}")
+            return []
+
+    def update_stpf_table(self):
+        """Atualiza a tabela de Step Functions com os dados filtrados"""
+        self.stpf_table.rows.clear()
+
+        # Contadores
+        success_count = 0
+        failed_count = 0
+        running_count = 0
+        total_minutes = 0.0
+
+        for job in self.filtered_stpf:
+            # Definir cor do status
+            status_color = ft.Colors.GREY
+            if job['status'] == 'SUCCEEDED':
+                status_color = ft.Colors.GREEN
+                success_count += 1
+            elif job['status'] == 'FAILED':
+                status_color = ft.Colors.RED
+                failed_count += 1
+            elif job['status'] == 'RUNNING':
+                status_color = ft.Colors.YELLOW
+                running_count += 1
+
+            row = ft.DataRow(
+                cells=[
+                    ft.DataCell(ft.Text(job['name'], size=12, color=ft.Colors.WHITE)),
+                    ft.DataCell(ft.Text(job['status'], size=12, color=status_color, weight=ft.FontWeight.BOLD)),
+                    ft.DataCell(ft.Text(job['last_execution'], size=12, color=ft.Colors.WHITE)),
+                    ft.DataCell(ft.Text(job['duration'], size=12, color=ft.Colors.WHITE)),
+                ]
+            )
+            self.stpf_table.rows.append(row)
+
+        # Atualizar KPIs
+        self.stpf_success.value = str(success_count)
+        self.stpf_failed.value = str(failed_count)
+        self.stpf_running.value = str(running_count)
+        self.stpf_time.value = str(int(total_minutes))
+
+        if hasattr(self, 'page'):
+            self.page.update()
+
+    def toggle_auto_refresh_stpf(self, e):
+        """Ativa/desativa atualização automática para STF"""
+        if self.auto_refresh_enabled_stpf.value:
+            self.start_auto_refresh_stpf()
+        else:
+            self.stop_auto_refresh_stpf()
+
+    def start_auto_refresh_stpf(self):
+        """Inicia timer de atualização automática para STF"""
+        if self.refresh_interval_stpf > 0:
+            self.auto_refresh_timer_stpf = threading.Timer(self.refresh_interval_stpf, self.auto_refresh_callback_stpf)
+            self.auto_refresh_timer_stpf.daemon = True
+            self.auto_refresh_timer_stpf.start()
+
+    def stop_auto_refresh_stpf(self):
+        """Para timer de atualização automática para STF"""
+        if self.auto_refresh_timer_stpf:
+            self.auto_refresh_timer_stpf.cancel()
+            self.auto_refresh_timer_stpf = None
+
+    def auto_refresh_callback_stpf(self):
+        """Callback para atualização automática de STF"""
+        if self.auto_refresh_enabled_stpf.value:
+            self.refresh_stpf_jobs()
+            # Agendar próxima atualização
+            if self.auto_refresh_enabled_stpf.value:  # Verificar novamente caso tenha sido desabilitado
+                self.start_auto_refresh_stpf()
+
+    def copy_stpf_to_clipboard(self, e):
+        """Copia a tabela filtrada de Step Functions para o clipboard"""
+        try:
+            if not self.filtered_stpf:
+                self.monitoring_status_sptf.value = "❌ Nenhuma Step Function para copiar"
+                self.monitoring_status_sptf.color = ft.Colors.RED
+                self.page.update()
+                return
+
+            # Criar cabeçalho
+            headers = ["Name", "Status", "Última Execução", "Duração"]
+
+            # Criar linhas
+            lines = ["\t".join(headers)]
+
+            for stpf in self.filtered_stpf:
+                line = "\t".join([
+                    stpf['name'],
+                    stpf['status'],
+                    stpf['last_execution'],
+                    stpf['duration']
+                ])
+                lines.append(line)
+
+            # Copiar para clipboard
+            clipboard_text = "\n".join(lines)
+            pyperclip.copy(clipboard_text)
+
+            self.monitoring_status_sptf.value = f"✅ {len(self.filtered_stpf)} Step Functions copiadas para clipboard"
+            self.monitoring_status_sptf.color = ft.Colors.GREEN
+            self.page.update()
+
+        except Exception as e:
+            self.monitoring_status_sptf.value = f"❌ Erro ao copiar: {str(e)}"
+            self.monitoring_status_sptf.color = ft.Colors.RED
+            self.page.update()
+
+    def export_stpf_to_excel(self, e):
+        """Exporta a tabela filtrada de Step Functions para Excel"""
+        try:
+            if not self.filtered_stpf:
+                self.monitoring_status_sptf.value = "❌ Nenhuma Step Function para exportar"
+                self.monitoring_status_sptf.color = ft.Colors.RED
+                self.page.update()
+                return
+
+            # Preparar dados para DataFrame
+            data = []
+            for stpf in self.filtered_stpf:
+                data.append({
+                    'Name': stpf['name'],
+                    'Status': stpf['status'],
+                    'Última Execução': stpf['last_execution'],
+                    'Duração': stpf['duration']
+                })
+
+            # Criar DataFrame
+            df = pd.DataFrame(data)
+
+            # Gerar nome do arquivo com timestamp
+            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+            filename = f"step_functions_{timestamp}.xlsx"
+
+            # Exportar para Excel
+            df.to_excel(filename, index=False, engine='openpyxl')
+
+            self.monitoring_status_sptf.value = f"✅ {len(self.filtered_stpf)} Step Functions exportadas para {filename}"
+            self.monitoring_status_sptf.color = ft.Colors.GREEN
+            self.page.update()
+
+        except Exception as e:
+            self.monitoring_status_sptf.value = f"❌ Erro ao exportar: {str(e)}"
+            self.monitoring_status_sptf.color = ft.Colors.RED
+            self.page.update()
 
     def toggle_auto_refresh(self, e):
         """Ativa/desativa atualização automática"""
@@ -1431,6 +2021,259 @@ class AWSApp:
             # Agendar próxima atualização
             if self.auto_refresh_enabled.value:  # Verificar novamente caso tenha sido desabilitado
                 self.start_auto_refresh()
+
+    # ============== FUNÇÕES DE CACHE ==============
+
+    def ensure_cache_directory(self):
+        """Garante que a pasta de cache existe"""
+        try:
+            self.cache_dir.mkdir(parents=True, exist_ok=True)
+            return True
+        except Exception as e:
+            print(f"❌ Erro ao criar pasta de cache: {e}")
+            return False
+
+    def save_glue_cache(self, jobs_data):
+        """Salva dados dos jobs Glue no cache local"""
+        try:
+            if not self.ensure_cache_directory():
+                return False
+
+            cache_data = {
+                "timestamp": datetime.now().isoformat(),
+                "account_id": self.current_account_id,
+                "profile": self.current_profile,
+                "jobs_count": len(jobs_data),
+                "jobs": []
+            }
+
+            # Converter dados para JSON (datetime não é serializável)
+            for job in jobs_data:
+                job_copy = job.copy()
+                if 'start_time_obj' in job_copy and job_copy['start_time_obj']:
+                    job_copy['start_time_obj'] = job_copy['start_time_obj'].isoformat()
+                else:
+                    job_copy['start_time_obj'] = None
+                cache_data["jobs"].append(job_copy)
+
+            with open(self.glue_cache_file, 'w', encoding='utf-8') as f:
+                json.dump(cache_data, f, indent=2, ensure_ascii=False)
+
+            print(f"💾 Cache Glue salvo: {len(jobs_data)} jobs em {self.glue_cache_file}")
+            return True
+
+        except Exception as e:
+            print(f"❌ Erro ao salvar cache Glue: {e}")
+            return False
+
+    def load_glue_cache(self):
+        """Carrega dados dos jobs Glue do cache local"""
+        try:
+            if not self.glue_cache_file.exists():
+                return None
+
+            with open(self.glue_cache_file, 'r', encoding='utf-8') as f:
+                cache_data = json.load(f)
+
+            # Verificar se o cache é para a conta/profile atual
+            if (cache_data.get("account_id") != self.current_account_id or
+                cache_data.get("profile") != self.current_profile):
+                print("🔄 Cache Glue é de outra conta/profile, ignorando...")
+                return None
+
+            # Converter datetime strings de volta
+            jobs = []
+            for job in cache_data.get("jobs", []):
+                if job.get('start_time_obj'):
+                    try:
+                        job['start_time_obj'] = datetime.fromisoformat(job['start_time_obj'])
+                    except:
+                        job['start_time_obj'] = None
+                jobs.append(job)
+
+            cache_timestamp = cache_data.get("timestamp", "")
+            print(f"📁 Cache Glue carregado: {len(jobs)} jobs (salvo em {cache_timestamp})")
+            return jobs
+
+        except Exception as e:
+            print(f"❌ Erro ao carregar cache Glue: {e}")
+            return None
+
+    def save_stpf_cache(self, stpf_data):
+        """Salva dados das Step Functions no cache local"""
+        try:
+            if not self.ensure_cache_directory():
+                return False
+
+            cache_data = {
+                "timestamp": datetime.now().isoformat(),
+                "account_id": self.current_account_id,
+                "profile": self.current_profile,
+                "stpf_count": len(stpf_data),
+                "step_functions": []
+            }
+
+            # Converter dados para JSON
+            for stpf in stpf_data:
+                stpf_copy = stpf.copy()
+                if 'start_time_obj' in stpf_copy and stpf_copy['start_time_obj']:
+                    stpf_copy['start_time_obj'] = stpf_copy['start_time_obj'].isoformat()
+                else:
+                    stpf_copy['start_time_obj'] = None
+                cache_data["step_functions"].append(stpf_copy)
+
+            with open(self.stpf_cache_file, 'w', encoding='utf-8') as f:
+                json.dump(cache_data, f, indent=2, ensure_ascii=False)
+
+            print(f"💾 Cache STP salvo: {len(stpf_data)} Step Functions em {self.stpf_cache_file}")
+            return True
+
+        except Exception as e:
+            print(f"❌ Erro ao salvar cache STP: {e}")
+            return False
+
+    def load_stpf_cache(self):
+        """Carrega dados das Step Functions do cache local"""
+        try:
+            if not self.stpf_cache_file.exists():
+                return None
+
+            with open(self.stpf_cache_file, 'r', encoding='utf-8') as f:
+                cache_data = json.load(f)
+
+            # Verificar se o cache é para a conta/profile atual
+            if (cache_data.get("account_id") != self.current_account_id or
+                cache_data.get("profile") != self.current_profile):
+                print("🔄 Cache STP é de outra conta/profile, ignorando...")
+                return None
+
+            # Converter datetime strings de volta
+            stpf_list = []
+            for stpf in cache_data.get("step_functions", []):
+                if stpf.get('start_time_obj'):
+                    try:
+                        stpf['start_time_obj'] = datetime.fromisoformat(stpf['start_time_obj'])
+                    except:
+                        stpf['start_time_obj'] = None
+                stpf_list.append(stpf)
+
+            cache_timestamp = cache_data.get("timestamp", "")
+            print(f"📁 Cache STP carregado: {len(stpf_list)} Step Functions (salvo em {cache_timestamp})")
+            return stpf_list
+
+        except Exception as e:
+            print(f"❌ Erro ao carregar cache STP: {e}")
+            return None
+
+    def check_and_load_cache_on_tab_open(self, tab_type):
+        """Verifica cache ao abrir aba e carrega se disponível"""
+        if not self.current_account_id:
+            return  # Não fazer nada se não estiver logado
+
+        if tab_type == "glue":
+            # Tentar carregar cache do Glue
+            cached_jobs = self.load_glue_cache()
+            if cached_jobs:
+                self.all_jobs = cached_jobs
+                self.filter_jobs()
+                self.monitoring_status.value = f"📁 {len(cached_jobs)} jobs carregados do cache"
+                self.monitoring_status.color = ft.Colors.BLUE
+                self.last_update_text.value = f"Cache carregado: {datetime.now().strftime('%H:%M:%S')}"
+                self.page.update()
+            else:
+                # Não tem cache, carregar dados automaticamente
+                print("🔄 Cache Glue não encontrado, carregando dados...")
+                self.refresh_jobs()
+
+        elif tab_type == "stpf":
+            # Tentar carregar cache do STP
+            cached_stpf = self.load_stpf_cache()
+            if cached_stpf:
+                self.all_stpf = cached_stpf
+                self.filter_stpf_jobs()
+                self.monitoring_status_sptf.value = f"📁 {len(cached_stpf)} Step Functions carregadas do cache"
+                self.monitoring_status_sptf.color = ft.Colors.BLUE
+                self.last_update_text_stpf.value = f"Cache carregado: {datetime.now().strftime('%H:%M:%S')}"
+                self.page.update()
+            else:
+                # Não tem cache, carregar dados automaticamente
+                print("🔄 Cache STP não encontrado, carregando dados...")
+                self.refresh_stpf_jobs()
+
+    def copy_jobs_to_clipboard(self, e):
+        """Copia a tabela filtrada de jobs Glue para o clipboard"""
+        try:
+            if not self.filtered_jobs:
+                self.monitoring_status.value = "❌ Nenhum job para copiar"
+                self.monitoring_status.color = ft.Colors.RED
+                self.page.update()
+                return
+
+            # Criar cabeçalho
+            headers = ["Job Name", "Status", "Última Execução", "Duração"]
+
+            # Criar linhas
+            lines = ["\t".join(headers)]
+
+            for job in self.filtered_jobs:
+                line = "\t".join([
+                    job['name'],
+                    job['status'],
+                    job['last_execution'],
+                    job['duration']
+                ])
+                lines.append(line)
+
+            # Copiar para clipboard
+            clipboard_text = "\n".join(lines)
+            pyperclip.copy(clipboard_text)
+
+            self.monitoring_status.value = f"✅ {len(self.filtered_jobs)} jobs copiados para clipboard"
+            self.monitoring_status.color = ft.Colors.GREEN
+            self.page.update()
+
+        except Exception as e:
+            self.monitoring_status.value = f"❌ Erro ao copiar: {str(e)}"
+            self.monitoring_status.color = ft.Colors.RED
+            self.page.update()
+
+    def export_jobs_to_excel(self, e):
+        """Exporta a tabela filtrada de jobs Glue para Excel"""
+        try:
+            if not self.filtered_jobs:
+                self.monitoring_status.value = "❌ Nenhum job para exportar"
+                self.monitoring_status.color = ft.Colors.RED
+                self.page.update()
+                return
+
+            # Preparar dados para DataFrame
+            data = []
+            for job in self.filtered_jobs:
+                data.append({
+                    'Job Name': job['name'],
+                    'Status': job['status'],
+                    'Última Execução': job['last_execution'],
+                    'Duração': job['duration']
+                })
+
+            # Criar DataFrame
+            df = pd.DataFrame(data)
+
+            # Gerar nome do arquivo com timestamp
+            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+            filename = f"glue_jobs_{timestamp}.xlsx"
+
+            # Exportar para Excel
+            df.to_excel(filename, index=False, engine='openpyxl')
+
+            self.monitoring_status.value = f"✅ {len(self.filtered_jobs)} jobs exportados para {filename}"
+            self.monitoring_status.color = ft.Colors.GREEN
+            self.page.update()
+
+        except Exception as e:
+            self.monitoring_status.value = f"❌ Erro ao exportar: {str(e)}"
+            self.monitoring_status.color = ft.Colors.RED
+            self.page.update()
 
     def get_local_path(self):
         prefix = self.prefix_dropdown.value
