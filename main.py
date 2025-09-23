@@ -14,6 +14,12 @@ from datetime import datetime, timezone, timedelta
 from pathlib import Path
 from botocore.exceptions import ClientError, NoCredentialsError, ProfileNotFound
 from concurrent.futures import ThreadPoolExecutor, as_completed
+try:
+    import awswrangler as wr
+    HAS_AWSWRANGLER = True
+except ImportError:
+    HAS_AWSWRANGLER = False
+    print("AVISO: awswrangler nao encontrado. Funcionalidades de tabelas nao estarao disponiveis.")
 
 
 class AWSApp:
@@ -33,6 +39,7 @@ class AWSApp:
 
         # Estado da navegação sidebar
         self.current_section = "Login"  # Seção atual selecionada
+        self.expanded_menus = {"Monitoring": False}  # Controla quais menus estão expandidos
 
         self.setup_page()
         self.setup_status_bar()
@@ -346,40 +353,117 @@ class AWSApp:
     def create_sidebar(self):
         """Cria o menu lateral de navegação"""
         sections = [
-            {"name": "Login", "icon": ft.Icons.LOGIN, "id": "Login"},
-            {"name": "S3", "icon": ft.Icons.CLOUD, "id": "S3"},
-            {"name": "Monitoring Glue", "icon": ft.Icons.DASHBOARD, "id": "Monitoring Glue"},
-            {"name": "Monitoring STF", "icon": ft.Icons.ANALYTICS, "id": "Monitoring STF"}
+            {"name": "Login", "icon": ft.Icons.LOGIN, "id": "Login", "type": "page"},
+            {"name": "S3", "icon": ft.Icons.CLOUD, "id": "S3", "type": "page"},
+            {
+                "name": "Monitoring",
+                "icon": ft.Icons.MONITOR,
+                "id": "Monitoring",
+                "type": "expandable",
+                "subitems": [
+                    {"name": "Glue", "icon": ft.Icons.DASHBOARD, "id": "Monitoring Glue"},
+                    {"name": "Step Functions", "icon": ft.Icons.ANALYTICS, "id": "Monitoring STF"},
+                    {"name": "Tables", "icon": ft.Icons.TABLE_CHART, "id": "Monitoring Tables"}
+                ]
+            }
         ]
 
         menu_items = []
 
         for section in sections:
-            is_selected = self.current_section == section["id"]
+            if section["type"] == "page":
+                # Item simples de página
+                is_selected = self.current_section == section["id"]
 
-            menu_item = ft.Container(
-                content=ft.Row([
-                    self.safe_icon(
-                        section["icon"],
-                        size=20,
-                        color=ft.Colors.WHITE if is_selected else ft.Colors.GREY_400,
-                        fallback_icon=ft.Icons.CIRCLE
-                    ),
-                    ft.Text(
-                        section["name"],
-                        size=14,
-                        color=ft.Colors.WHITE if is_selected else ft.Colors.GREY_400,
-                        weight=ft.FontWeight.BOLD if is_selected else ft.FontWeight.NORMAL
-                    )
-                ], alignment=ft.MainAxisAlignment.START, spacing=10),
-                padding=ft.Padding(15, 12, 15, 12),
-                margin=ft.Margin(5, 2, 5, 2),
-                bgcolor=ft.Colors.BLUE_700 if is_selected else ft.Colors.TRANSPARENT,
-                border_radius=8,
-                on_click=lambda e, section_id=section["id"]: self.on_sidebar_click(section_id),
-                ink=True
-            )
-            menu_items.append(menu_item)
+                menu_item = ft.Container(
+                    content=ft.Row([
+                        self.safe_icon(
+                            section["icon"],
+                            size=20,
+                            color=ft.Colors.WHITE if is_selected else ft.Colors.GREY_400,
+                            fallback_icon=ft.Icons.CIRCLE
+                        ),
+                        ft.Text(
+                            section["name"],
+                            size=14,
+                            color=ft.Colors.WHITE if is_selected else ft.Colors.GREY_400,
+                            weight=ft.FontWeight.BOLD if is_selected else ft.FontWeight.NORMAL
+                        )
+                    ], alignment=ft.MainAxisAlignment.START, spacing=10),
+                    padding=ft.Padding(15, 12, 15, 12),
+                    margin=ft.Margin(5, 2, 5, 2),
+                    bgcolor=ft.Colors.BLUE_700 if is_selected else ft.Colors.TRANSPARENT,
+                    border_radius=8,
+                    on_click=lambda e, section_id=section["id"]: self.on_sidebar_click(section_id),
+                    ink=True
+                )
+                menu_items.append(menu_item)
+
+            elif section["type"] == "expandable":
+                # Item expandível com sub-itens
+                is_expanded = self.expanded_menus.get(section["id"], False)
+                has_selected_child = any(self.current_section == subitem["id"] for subitem in section["subitems"])
+
+                # Item principal
+                expansion_state = "expandido" if is_expanded else "recolhido"
+                main_item = ft.Container(
+                    content=ft.Row([
+                        self.safe_icon(
+                            section["icon"],
+                            size=20,
+                            color=ft.Colors.WHITE if has_selected_child else ft.Colors.GREY_400,
+                            fallback_icon=ft.Icons.CIRCLE
+                        ),
+                        ft.Text(
+                            section["name"],
+                            size=14,
+                            color=ft.Colors.WHITE if has_selected_child else ft.Colors.GREY_400,
+                            weight=ft.FontWeight.BOLD if has_selected_child else ft.FontWeight.NORMAL
+                        ),
+                        ft.Icon(
+                            ft.Icons.EXPAND_MORE if is_expanded else ft.Icons.CHEVRON_RIGHT,
+                            size=16,
+                            color=ft.Colors.GREY_400
+                        )
+                    ], alignment=ft.MainAxisAlignment.SPACE_BETWEEN, spacing=10),
+                    padding=ft.Padding(15, 12, 15, 12),
+                    margin=ft.Margin(5, 2, 5, 2),
+                    bgcolor=ft.Colors.GREY_700 if has_selected_child else ft.Colors.TRANSPARENT,
+                    border_radius=8,
+                    on_click=lambda e, section_id=section["id"]: self.toggle_menu_expansion(section_id),
+                    ink=True
+                )
+                menu_items.append(main_item)
+
+                # Sub-itens (apenas se expandido)
+                if is_expanded:
+                    for subitem in section["subitems"]:
+                        is_sub_selected = self.current_section == subitem["id"]
+
+                        sub_menu_item = ft.Container(
+                            content=ft.Row([
+                                ft.Container(width=10),  # Indentação
+                                self.safe_icon(
+                                    subitem["icon"],
+                                    size=18,
+                                    color=ft.Colors.WHITE if is_sub_selected else ft.Colors.GREY_500,
+                                    fallback_icon=ft.Icons.CIRCLE
+                                ),
+                                ft.Text(
+                                    subitem["name"],
+                                    size=13,
+                                    color=ft.Colors.WHITE if is_sub_selected else ft.Colors.GREY_500,
+                                    weight=ft.FontWeight.BOLD if is_sub_selected else ft.FontWeight.NORMAL
+                                )
+                            ], alignment=ft.MainAxisAlignment.START, spacing=8),
+                            padding=ft.Padding(15, 10, 15, 10),
+                            margin=ft.Margin(15, 1, 5, 1),
+                            bgcolor=ft.Colors.BLUE_600 if is_sub_selected else ft.Colors.TRANSPARENT,
+                            border_radius=6,
+                            on_click=lambda e, subitem_id=subitem["id"]: self.on_sidebar_click(subitem_id),
+                            ink=True
+                        )
+                        menu_items.append(sub_menu_item)
 
         return ft.Container(
             content=ft.Column([
@@ -387,7 +471,8 @@ class AWSApp:
                 ft.Container(
                     content=ft.Column([
                         self.safe_icon(ft.Icons.CLOUD, size=40, color=ft.Colors.ORANGE, fallback_icon=ft.Icons.APPS),
-                        ft.Text("EMPS Dados Manager", size=16, weight=ft.FontWeight.BOLD, color=ft.Colors.WHITE),
+                        ft.Text("EMPS Dados Manager", size=16, weight=ft.FontWeight.BOLD, color=ft.Colors.WHITE,
+                               ),
                     ], horizontal_alignment=ft.CrossAxisAlignment.CENTER, spacing=8),
                     padding=ft.Padding(20, 20, 20, 30),
                 ),
@@ -400,11 +485,21 @@ class AWSApp:
             padding=ft.Padding(0, 0, 0, 10),
         )
 
+    def toggle_menu_expansion(self, menu_id):
+        """Alterna expansão/colapso de um menu"""
+        self.expanded_menus[menu_id] = not self.expanded_menus.get(menu_id, False)
+        print(f"[SIDEBAR] Menu {menu_id} {'expandido' if self.expanded_menus[menu_id] else 'recolhido'}")
+        self.update_sidebar()
+
     def on_sidebar_click(self, section_id):
         """Handler para cliques no sidebar"""
         if self.current_section != section_id:
             self.current_section = section_id
             print(f"[SIDEBAR] Seção selecionada: {section_id}")
+
+            # Se selecionando um sub-item de Monitoring, garantir que o menu está expandido
+            if section_id in ["Monitoring Glue", "Monitoring STF", "Monitoring Tables"]:
+                self.expanded_menus["Monitoring"] = True
 
             # Recriar sidebar com nova seleção
             self.update_sidebar()
@@ -425,6 +520,12 @@ class AWSApp:
                     self.check_and_load_cache_on_tab_open("stpf")
                 threading.Thread(target=load_cache, daemon=True).start()
 
+            elif section_id == "Monitoring Tables":
+                def load_cache():
+                    time.sleep(0.1)
+                    self.check_and_load_cache_on_tab_open("tables")
+                threading.Thread(target=load_cache, daemon=True).start()
+
     def update_sidebar(self):
         """Atualiza o sidebar com nova seleção"""
         self.sidebar_container.content = self.create_sidebar().content
@@ -440,6 +541,8 @@ class AWSApp:
             content = self.monitoring_glue_tab
         elif self.current_section == "Monitoring STF":
             content = self.monitoring_stpf_tab
+        elif self.current_section == "Monitoring Tables":
+            content = self.monitoring_tables_tab
         else:
             content = self.login_tab
 
@@ -452,6 +555,7 @@ class AWSApp:
         self.s3_tab = self.create_s3_tab()
         self.monitoring_glue_tab = self.create_monitoring_tab()
         self.monitoring_stpf_tab = self.create_monitoring_stpf_tab()
+        self.monitoring_tables_tab = self.create_monitoring_tables_tab()
 
         # Criar sidebar
         self.sidebar_container = self.create_sidebar()
@@ -499,7 +603,8 @@ class AWSApp:
             style=ft.ButtonStyle(
                 shape=ft.RoundedRectangleBorder(radius=10),
                 elevation=4,
-            )
+            ),
+            tooltip="Fazer login com o perfil AWS selecionado"
         )
 
         self.logout_button = ft.ElevatedButton(
@@ -517,7 +622,8 @@ class AWSApp:
                 color=ft.Colors.WHITE,
                 shape=ft.RoundedRectangleBorder(radius=10),
                 elevation=4,
-            )
+            ),
+            tooltip="Fazer logout e retornar à seleção de perfil"
         )
 
         self.progress_ring = ft.ProgressRing(
@@ -595,7 +701,8 @@ class AWSApp:
             label="Prefixo",
             options=[ft.dropdown.Option(option) for option in prefix_options],
             width=140,
-            on_change=self.update_s3_path
+            on_change=self.update_s3_path,
+            tooltip="Selecione o prefixo do bucket S3"
         )
 
         # RT Dropdown
@@ -604,7 +711,8 @@ class AWSApp:
             label="RT",
             options=[ft.dropdown.Option(option) for option in rt_options],
             width=120,
-            on_change=self.on_rt_change
+            on_change=self.on_rt_change,
+            tooltip="Selecione o tipo de RT (Routing Table)"
         )
 
         # Environment Dropdown
@@ -613,7 +721,8 @@ class AWSApp:
             label="Ambiente",
             options=[ft.dropdown.Option(option) for option in env_options],
             width=120,
-            on_change=self.update_s3_path
+            on_change=self.update_s3_path,
+            tooltip="Selecione o ambiente de trabalho"
         )
 
         # Squad Dropdown (inicialmente vazio, será preenchido baseado no RT)
@@ -622,7 +731,8 @@ class AWSApp:
             options=[],
             width=140,
             on_change=self.update_s3_path,
-            disabled=True  # Desabilitado até selecionar RT
+            disabled=True,  # Desabilitado até selecionar RT
+            tooltip="Selecione o squad (equipe). Primeiro selecione um RT"
         )
 
 
@@ -665,7 +775,8 @@ class AWSApp:
             style=ft.ButtonStyle(
                 shape=ft.RoundedRectangleBorder(radius=10),
                 elevation=4,
-            )
+            ),
+            tooltip="Sincronizar arquivos da pasta local para o bucket S3"
         )
 
         self.sync_from_s3_button = ft.ElevatedButton(
@@ -677,7 +788,8 @@ class AWSApp:
             style=ft.ButtonStyle(
                 shape=ft.RoundedRectangleBorder(radius=10),
                 elevation=4,
-            )
+            ),
+            tooltip="Sincronizar arquivos do bucket S3 para a pasta local"
         )
 
         # Checkbox para --delete no S3 → Local
@@ -688,7 +800,9 @@ class AWSApp:
         )
 
         # Progress and Status
-        self.s3_progress = ft.ProgressRing(visible=False)
+        self.s3_progress = ft.ProgressRing(
+            visible=False
+        )
         self.s3_status = ft.Text(
             "",
             size=14,
@@ -2220,6 +2334,8 @@ class AWSApp:
                 cache_file = self.get_glue_cache_filename()
             elif cache_type == "stpf":
                 cache_file = self.get_stpf_cache_filename()
+            elif cache_type == "tables":
+                cache_file = self.get_tables_cache_filename()
             else:
                 return False
 
@@ -2253,6 +2369,30 @@ class AWSApp:
 
         except Exception as e:
             print(f"❌ Erro ao verificar cache {cache_type}: {e}")
+            return False
+
+    def is_cache_fresh_by_data(self, cache_data, minutes_threshold=15):
+        """Verifica se o cache é recente usando dados já carregados"""
+        try:
+            # Verificar timestamp
+            updated_at = cache_data.get("updated_at")
+            if not updated_at:
+                return False
+
+            # Converter timestamp para datetime
+            cache_time = datetime.fromisoformat(updated_at.replace('Z', '+00:00'))
+            current_time = datetime.now(timezone.utc)
+
+            # Calcular diferença em minutos
+            time_diff = (current_time - cache_time).total_seconds() / 60
+
+            is_fresh = time_diff < minutes_threshold
+            print(f"🕐 Cache Tables: {time_diff:.1f} min atrás - {'fresco' if is_fresh else 'expirado'}")
+
+            return is_fresh
+
+        except Exception as e:
+            print(f"❌ Erro ao verificar timestamp do cache: {e}")
             return False
 
     def save_glue_cache(self, jobs_data):
@@ -2395,6 +2535,69 @@ class AWSApp:
             print(f"❌ Erro ao carregar cache STP: {e}")
             return None
 
+    def get_tables_cache_filename(self):
+        """Retorna o nome do arquivo de cache das Tabelas para a conta atual"""
+        if not self.current_account_id:
+            return self.cache_dir / "tables_cache.json"  # Fallback para casos sem account_id
+        return self.cache_dir / f"tables_cache_{self.current_account_id}.json"
+
+    def save_tables_cache(self, tables_data):
+        """Salva dados das Tabelas no cache local"""
+        try:
+            if not self.ensure_cache_directory():
+                return False
+
+            current_time = datetime.now(timezone.utc).isoformat()
+            cache_data = {
+                "timestamp": current_time,
+                "updated_at": current_time,
+                "account_id": self.current_account_id,
+                "profile": self.current_profile,
+                "tables_count": len(tables_data),
+                "tables": tables_data  # Tables data is already JSON serializable
+            }
+
+            cache_file = self.get_tables_cache_filename()
+            with open(cache_file, 'w', encoding='utf-8') as f:
+                json.dump(cache_data, f, indent=2, ensure_ascii=False)
+
+            print(f"💾 Cache Tables salvo: {len(tables_data)} tabelas em {cache_file}")
+            return True
+
+        except Exception as e:
+            print(f"❌ Erro ao salvar cache Tables: {e}")
+            return False
+
+    def load_tables_cache(self):
+        """Carrega dados das Tabelas do cache local"""
+        try:
+            cache_file = self.get_tables_cache_filename()
+            if not cache_file.exists():
+                return None
+
+            with open(cache_file, 'r', encoding='utf-8') as f:
+                cache_data = json.load(f)
+
+            # Verificar se o cache é para a conta/profile atual
+            if (cache_data.get("account_id") != self.current_account_id or
+                cache_data.get("profile") != self.current_profile):
+                print("🔄 Cache Tables é de outra conta/profile, ignorando...")
+                return None
+
+            # Verificar se o cache não está muito antigo (15 minutos)
+            if not self.is_cache_fresh_by_data(cache_data, minutes_threshold=15):
+                print("⏰ Cache Tables está muito antigo (>15 min), ignorando...")
+                return None
+
+            tables_list = cache_data.get("tables", [])
+            cache_timestamp = cache_data.get("timestamp", "")
+            print(f"📁 Cache Tables carregado: {len(tables_list)} tabelas (salvo em {cache_timestamp})")
+            return tables_list
+
+        except Exception as e:
+            print(f"❌ Erro ao carregar cache Tables: {e}")
+            return None
+
     def check_and_load_cache_on_tab_open(self, tab_type):
         """Verifica cache ao abrir aba e carrega se disponível"""
         if not self.current_account_id:
@@ -2429,6 +2632,20 @@ class AWSApp:
                 # Não tem cache, carregar dados automaticamente
                 print("🔄 Cache STP não encontrado, carregando dados...")
                 self.refresh_stpf_jobs()
+
+        elif tab_type == "tables":
+            # Tentar carregar cache das Tabelas
+            cached_tables = self.load_tables_cache()
+            if cached_tables:
+                self.all_tables = cached_tables
+                self.filter_tables()
+                self.monitoring_status_tables.value = f"📁 {len(cached_tables)} tabelas carregadas do cache"
+                self.monitoring_status_tables.color = ft.Colors.BLUE
+                self.page.update()
+            else:
+                # Não tem cache, carregar dados automaticamente
+                print("🔄 Cache Tables não encontrado, carregando dados...")
+                self.refresh_tables()
 
     def copy_jobs_to_clipboard(self, e):
         """Copia a tabela filtrada de jobs Glue para o clipboard"""
@@ -2950,6 +3167,438 @@ class AWSApp:
         self.progress_ring.visible = False
         self.logout_button.disabled = False
         self.page.update()
+
+    # Table Monitoring Functions
+    @staticmethod
+    def fetch_table_metadata(database: str, table_name: str):
+        """Busca detalhes de uma única tabela no Glue Catalog."""
+        if not HAS_AWSWRANGLER:
+            return {
+                "name": table_name,
+                "database": database,
+                "created_date": "N/A",
+                "last_updated": "awswrangler nao disponivel",
+                "num_partitions": 0,
+                "type": "unknown",
+            }
+        try:
+            desc = wr.catalog.get_table(database=database, table=table_name)
+
+            created = desc.get("CreateTime")
+            updated = desc.get("UpdateTime")
+            input_format = desc.get("StorageDescriptor", {}).get("InputFormat", "")
+
+            # Detecta formato do arquivo
+            if "parquet" in input_format.lower():
+                fmt = "parquet"
+            elif "json" in input_format.lower():
+                fmt = "json"
+            elif "csv" in input_format.lower():
+                fmt = "csv"
+            else:
+                fmt = "unknown"
+
+            # Conta partições
+            partitions = len(desc.get("PartitionKeys", []))
+
+            return {
+                "name": table_name,
+                "database": database,
+                "created_date": created.strftime("%Y%m%d") if created else "N/A",
+                "last_updated": updated.strftime("%Y%m%d") if updated else "N/A",
+                "num_partitions": partitions,
+                "type": fmt,
+            }
+
+        except Exception as e:
+            return {
+                "name": table_name,
+                "database": database,
+                "created_date": "ERROR",
+                "last_updated": f"Erro: {str(e)}",
+                "num_partitions": 0,
+                "type": "unknown",
+            }
+
+    @staticmethod
+    def fetch_all_tables(databases=["itau", "teste"], max_workers=10):
+        """Busca tabelas dos databases especificados usando threads."""
+        if not HAS_AWSWRANGLER:
+            # Retornar dados de exemplo quando awswrangler não está disponível
+            return [
+                {
+                    "name": "tabela_exemplo_1",
+                    "database": "itau",
+                    "created_date": "20240101",
+                    "last_updated": "20240101",
+                    "num_partitions": 0,
+                    "type": "awswrangler indisponivel"
+                },
+                {
+                    "name": "tabela_exemplo_2",
+                    "database": "teste",
+                    "created_date": "20240101",
+                    "last_updated": "20240101",
+                    "num_partitions": 0,
+                    "type": "awswrangler indisponivel"
+                }
+            ]
+
+        tables_metadata = []
+
+        with ThreadPoolExecutor(max_workers=max_workers) as executor:
+            futures = []
+            for db in databases:
+                try:
+                    tables = wr.catalog.tables(database=db).values
+                    for t in tables:
+                        futures.append(
+                            executor.submit(AWSApp.fetch_table_metadata, db, t)
+                        )
+                except Exception as e:
+                    print(f"❌ Erro ao listar tabelas no database {db}: {e}")
+
+            for future in as_completed(futures):
+                tables_metadata.append(future.result())
+
+        return tables_metadata
+
+    def update_tables_table(self, tables_data=None):
+        """
+        Atualiza a tabela da aba Monitoring Tables.
+        """
+        if tables_data is None:
+            tables_data = getattr(self, "all_tables", [])
+
+        # Limpa tabela atual
+        self.table_monitoring.rows.clear()
+
+        for tbl in tables_data:
+            row = ft.DataRow(
+                cells=[
+                    ft.DataCell(ft.Text(tbl.get("name", ""), size=12)),
+                    ft.DataCell(ft.Text(tbl.get("database", ""), size=12)),
+                    ft.DataCell(ft.Text(tbl.get("created_date", ""), size=12)),
+                    ft.DataCell(ft.Text(tbl.get("last_updated", ""), size=12)),
+                    ft.DataCell(ft.Text(tbl.get("type", ""), size=12)),
+                    ft.DataCell(ft.Text(str(tbl.get("num_partitions", 0)), size=12)),
+                ]
+            )
+            self.table_monitoring.rows.append(row)
+
+        # Força refresh na UI
+        if hasattr(self, "page"):
+            self.page.update()
+
+    def refresh_tables(self, e=None):
+        """Atualiza a lista de tabelas do Glue Catalog (Monitoring Tables)."""
+        if not self.current_account_id:
+            self.monitoring_status_tables.value = "Faça login primeiro para visualizar tabelas"
+            self.monitoring_status_tables.color = ft.Colors.RED
+            self.page.update()
+            return
+
+        # Verificar se cache é recente (menos de 15 minutos)
+        if self.is_cache_fresh("tables", 15):
+            self.monitoring_status_tables.value = "⏰ Cache recente (menos de 15 min) - Use o cache existente para evitar custos adicionais"
+            self.monitoring_status_tables.color = ft.Colors.BLUE
+            self.page.update()
+            return
+
+        # Ativa progress
+        self.monitoring_progress_tables.visible = True
+        self.refresh_button_tables.disabled = True
+        self.monitoring_status_tables.value = "Carregando tabelas do Glue..."
+        self.monitoring_status_tables.color = ft.Colors.ORANGE
+        self.page.update()
+
+        def fetch_in_background():
+            try:
+                tables = self.fetch_all_tables(databases=["itau", "teste"])
+
+                def update_ui():
+                    self.all_tables = tables
+                    self.update_tables_table(tables)
+
+                    # Salvar no cache
+                    self.save_tables_cache(tables)
+
+                    self.monitoring_status_tables.value = f"✅ {len(tables)} tabelas encontradas"
+                    self.monitoring_status_tables.color = ft.Colors.GREEN
+                    self.monitoring_progress_tables.visible = False
+                    self.refresh_button_tables.disabled = False
+                    self.page.update()
+
+                # Executa atualização da UI na thread principal
+                self.page.run_thread(update_ui)
+
+            except Exception as e:
+                def update_ui_error():
+                    self.monitoring_status_tables.value = f"❌ Erro ao carregar tabelas: {str(e)}"
+                    self.monitoring_status_tables.color = ft.Colors.RED
+                    self.monitoring_progress_tables.visible = False
+                    self.refresh_button_tables.disabled = False
+                    self.page.update()
+
+                self.page.run_thread(update_ui_error)
+
+        # Executar em thread separada
+        threading.Thread(target=fetch_in_background, daemon=True).start()
+
+    def create_monitoring_tables_tab(self):
+        # Campo de busca
+        self.table_filter = ft.TextField(
+            label="Filtrar Tabelas",
+            width=300,
+            value=self.load_filter_text("table_monitoring"),
+            on_change=self.filter_tables
+        )
+
+        # Botão de atualização manual
+        self.refresh_button_tables = ft.ElevatedButton(
+            "🔄 Atualizar",
+            on_click=self.refresh_tables,
+            width=130,
+            height=40,
+            style=ft.ButtonStyle(
+                shape=ft.RoundedRectangleBorder(radius=8),
+                elevation=3,
+            )
+        )
+
+        # Botões de exportação/copiar
+        self.copy_tables_button = ft.IconButton(
+            icon=ft.Icons.COPY,
+            tooltip="Copiar tabela para clipboard",
+            on_click=self.copy_tables_to_clipboard,
+            icon_size=20,
+            style=ft.ButtonStyle(
+                bgcolor=ft.Colors.BLUE_600,
+                color=ft.Colors.WHITE,
+                shape=ft.RoundedRectangleBorder(radius=8),
+            )
+        )
+
+        self.export_tables_button = ft.IconButton(
+            icon=ft.Icons.FILE_DOWNLOAD,
+            tooltip="Exportar tabela para Excel",
+            on_click=self.export_tables_to_excel,
+            icon_size=20,
+            style=ft.ButtonStyle(
+                bgcolor=ft.Colors.GREEN_600,
+                color=ft.Colors.WHITE,
+                shape=ft.RoundedRectangleBorder(radius=8),
+            )
+        )
+
+        # Progress e status
+        self.monitoring_progress_tables = ft.ProgressRing(visible=False)
+        self.monitoring_status_tables = ft.Text(
+            "Faça login primeiro para visualizar tabelas",
+            size=14,
+            color=ft.Colors.GREY_400
+        )
+
+        # Tabela de Monitoring Tables
+        self.table_monitoring = ft.DataTable(
+            columns=[
+                ft.DataColumn(ft.Text("Name", weight=ft.FontWeight.BOLD)),
+                ft.DataColumn(ft.Text("Database", weight=ft.FontWeight.BOLD)),
+                ft.DataColumn(ft.Text("Created Date", weight=ft.FontWeight.BOLD)),
+                ft.DataColumn(ft.Text("Last Updated", weight=ft.FontWeight.BOLD)),
+                ft.DataColumn(ft.Text("Type", weight=ft.FontWeight.BOLD)),
+                ft.DataColumn(ft.Text("Partitions", weight=ft.FontWeight.BOLD)),
+            ],
+            rows=[],
+            expand=True
+        )
+
+        self.tables_container = ft.Container(
+            content=self.table_monitoring,
+            expand=True,
+            bgcolor=ft.Colors.GREY_800,
+            border=ft.border.all(1, ft.Colors.GREY_700),
+            border_radius=12,
+            padding=15,
+            shadow=ft.BoxShadow(
+                spread_radius=0,
+                blur_radius=8,
+                color=ft.Colors.BLACK26,
+                offset=ft.Offset(0, 2),
+            )
+        )
+
+        return ft.Container(
+            content=ft.Column([
+                # Container de filtros e botões
+                ft.Container(
+                    content=ft.Row([
+                        self.table_filter,
+                        ft.Container(width=20),
+                        self.refresh_button_tables,
+                        self.monitoring_progress_tables,
+                        ft.Container(width=15),
+                        self.copy_tables_button,
+                        ft.Container(width=5),
+                        self.export_tables_button
+                    ], alignment=ft.MainAxisAlignment.START),
+                    padding=ft.padding.all(20),
+                    bgcolor=ft.Colors.GREY_800,
+                    border_radius=12,
+                    border=ft.border.all(1, ft.Colors.GREY_700),
+                    shadow=ft.BoxShadow(
+                        spread_radius=0,
+                        blur_radius=8,
+                        color=ft.Colors.BLACK26,
+                        offset=ft.Offset(0, 2),
+                    )
+                ),
+
+                ft.Container(height=15),
+
+                # Status com progress
+                ft.Container(
+                    content=ft.Row([
+                        self.monitoring_status_tables,
+                        ft.Container(expand=True),
+                    ], alignment=ft.MainAxisAlignment.SPACE_BETWEEN),
+                    padding=ft.padding.symmetric(horizontal=20, vertical=12),
+                    bgcolor=ft.Colors.GREY_800,
+                    border_radius=8,
+                    border=ft.border.all(1, ft.Colors.GREY_700),
+                ),
+
+                ft.Container(height=15),
+
+                # Tabela
+                ft.Container(
+                    content=ft.Column([
+                        ft.Text("Monitoring Tables:", size=14, weight=ft.FontWeight.BOLD, color=ft.Colors.WHITE),
+                        ft.Container(height=10),
+                        self.tables_container,
+                    ]),
+                    expand=True
+                ),
+            ],
+            spacing=8,
+            horizontal_alignment=ft.CrossAxisAlignment.STRETCH,
+            scroll=ft.ScrollMode.AUTO
+            ),
+            padding=25,
+            expand=True,
+            bgcolor=ft.Colors.GREY_900
+        )
+
+    def filter_tables(self, e=None):
+        """Filtra tabelas baseado no texto de busca."""
+        filter_text = self.table_filter.value.lower() if self.table_filter.value else ""
+
+        if not hasattr(self, 'all_tables') or not self.all_tables:
+            return
+
+        if not filter_text:
+            # Se não há filtro, mostra todas as tabelas
+            self.update_tables_table(self.all_tables)
+        else:
+            # Filtra tabelas que contenham o texto no nome ou database
+            filtered_tables = [
+                table for table in self.all_tables
+                if (filter_text in table.get("name", "").lower() or
+                    filter_text in table.get("database", "").lower())
+            ]
+            self.update_tables_table(filtered_tables)
+
+        # Salvar texto do filtro
+        self.save_filter_text("table_monitoring", filter_text)
+
+    def copy_tables_to_clipboard(self, e=None):
+        """Copia dados das tabelas filtradas para clipboard."""
+        try:
+            if not hasattr(self, 'table_monitoring') or not self.table_monitoring.rows:
+                return
+
+            # Cabeçalhos
+            headers = ["Name", "Database", "Created Date", "Last Updated", "Type", "Partitions"]
+
+            # Dados das linhas
+            data = []
+            for row in self.table_monitoring.rows:
+                row_data = []
+                for cell in row.cells:
+                    row_data.append(cell.content.value if hasattr(cell.content, 'value') else str(cell.content))
+                data.append(row_data)
+
+            # Criar texto formatado para clipboard
+            clipboard_text = "\t".join(headers) + "\n"
+            for row_data in data:
+                clipboard_text += "\t".join(row_data) + "\n"
+
+            pyperclip.copy(clipboard_text)
+
+            # Feedback visual
+            self.monitoring_status_tables.value = "✅ Dados copiados para clipboard"
+            self.monitoring_status_tables.color = ft.Colors.GREEN
+            self.page.update()
+
+            # Reset status após 3 segundos
+            def reset_status():
+                time.sleep(3)
+                self.monitoring_status_tables.value = f"✅ {len(data)} tabelas encontradas"
+                self.monitoring_status_tables.color = ft.Colors.GREEN
+                self.page.update()
+
+            threading.Thread(target=reset_status, daemon=True).start()
+
+        except Exception as e:
+            self.monitoring_status_tables.value = f"❌ Erro ao copiar: {str(e)}"
+            self.monitoring_status_tables.color = ft.Colors.RED
+            self.page.update()
+
+    def export_tables_to_excel(self, e=None):
+        """Exporta dados das tabelas filtradas para Excel."""
+        try:
+            if not hasattr(self, 'table_monitoring') or not self.table_monitoring.rows:
+                return
+
+            # Preparar dados
+            data = []
+            for row in self.table_monitoring.rows:
+                row_data = []
+                for cell in row.cells:
+                    row_data.append(cell.content.value if hasattr(cell.content, 'value') else str(cell.content))
+                data.append(row_data)
+
+            # Criar DataFrame
+            df = pd.DataFrame(data, columns=["Name", "Database", "Created Date", "Last Updated", "Type", "Partitions"])
+
+            # Nome do arquivo com timestamp
+            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+            filename = f"monitoring_tables_{timestamp}.xlsx"
+
+            # Caminho completo
+            downloads_path = Path.home() / "Downloads" / filename
+
+            # Exportar
+            df.to_excel(downloads_path, index=False, engine='openpyxl')
+
+            # Feedback visual
+            self.monitoring_status_tables.value = f"✅ Exportado para {filename}"
+            self.monitoring_status_tables.color = ft.Colors.GREEN
+            self.page.update()
+
+            # Reset status após 5 segundos
+            def reset_status():
+                time.sleep(5)
+                self.monitoring_status_tables.value = f"✅ {len(data)} tabelas encontradas"
+                self.monitoring_status_tables.color = ft.Colors.GREEN
+                self.page.update()
+
+            threading.Thread(target=reset_status, daemon=True).start()
+
+        except Exception as e:
+            self.monitoring_status_tables.value = f"❌ Erro ao exportar: {str(e)}"
+            self.monitoring_status_tables.color = ft.Colors.RED
+            self.page.update()
 
 
 def main(page: ft.Page):
