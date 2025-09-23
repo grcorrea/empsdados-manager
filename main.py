@@ -31,9 +31,12 @@ class AWSApp:
         self.current_account_id = None
         self.current_user_arn = None
 
+        # Estado da navegação sidebar
+        self.current_section = "Login"  # Seção atual selecionada
+
         self.setup_page()
         self.setup_status_bar()
-        self.setup_tabs()
+        self.setup_layout_with_sidebar()
         self.check_login_status()
 
     def setup_environment(self):
@@ -119,7 +122,7 @@ class AWSApp:
             # Configuração padrão caso o arquivo não exista
             return {
                 "app": {
-                    "title": "AWS Manager",
+                    "title": "EMPS Dados Manager",
                     "theme_mode": "dark",
                     "window": {"width": 600, "height": 750, "resizable": False}
                 },
@@ -157,7 +160,7 @@ class AWSApp:
 
     def setup_page(self):
         app_config = self.config.get("app", {})
-        self.page.title = app_config.get("title", "AWS Manager")
+        self.page.title = app_config.get("title", "EMPS Dados Manager")
         self.page.theme_mode = ft.ThemeMode.DARK if app_config.get("theme_mode") == "dark" else ft.ThemeMode.LIGHT
 
         # Tema dark customizado com mais contraste e visual aprimorado
@@ -178,12 +181,16 @@ class AWSApp:
             ),
         )
 
-        # Configurações da janela
-        window_config = app_config.get("window", {})
-        self.page.window.width = window_config.get("width", 600)
-        self.page.window.height = window_config.get("height", 750)
-        self.page.window.resizable = window_config.get("resizable", False)
-        self.page.window.center()
+        # Configurações da janela - maximizada e responsiva
+        self.page.window.maximized = True
+        self.page.window.resizable = True
+
+        # Fallback caso não consiga maximizar
+        if not self.page.window.maximized:
+            window_config = app_config.get("window", {})
+            self.page.window.width = window_config.get("width", 1200)
+            self.page.window.height = window_config.get("height", 800)
+            self.page.window.center()
 
         # Background da página com gradiente sutil
         self.page.bgcolor = ft.Colors.GREY_900
@@ -323,70 +330,156 @@ class AWSApp:
         """Força atualização da barra de status"""
         self.refresh_aws_status()
 
-    def setup_tabs(self):
-        # Login Tab Content
-        self.login_tab = self.create_login_tab()
+    def safe_icon(self, icon_name, size=20, color=ft.Colors.WHITE, fallback_icon=ft.Icons.CIRCLE):
+        """Cria um ícone com tratamento de erro para ícones inexistentes"""
+        try:
+            # Tentar criar o ícone
+            return ft.Icon(icon_name, size=size, color=color)
+        except (AttributeError, Exception):
+            # Se o ícone não existir, usar um ícone padrão ou não mostrar nenhum
+            try:
+                return ft.Icon(fallback_icon, size=size, color=color)
+            except:
+                # Se nem o fallback funcionar, retornar container vazio
+                return ft.Container(width=size, height=size)
 
-        # S3 Tab Content
-        self.s3_tab = self.create_s3_tab()
+    def create_sidebar(self):
+        """Cria o menu lateral de navegação"""
+        sections = [
+            {"name": "Login", "icon": ft.Icons.LOGIN, "id": "Login"},
+            {"name": "S3", "icon": ft.Icons.CLOUD, "id": "S3"},
+            {"name": "Monitoring Glue", "icon": ft.Icons.DASHBOARD, "id": "Monitoring Glue"},
+            {"name": "Monitoring STF", "icon": ft.Icons.ANALYTICS, "id": "Monitoring STF"}
+        ]
 
-        # Monitoring Glue Tab Content
-        self.monitoring_glue_tab = self.create_monitoring_tab()
+        menu_items = []
 
-        # Monitoring STF Tab Content
-        self.monitoring_stpf_tab = self.create_monitoring_stpf_tab()
+        for section in sections:
+            is_selected = self.current_section == section["id"]
 
-        # Create Tabs com handler para detectar mudança
-        self.tabs = ft.Tabs(
-            selected_index=0,
-            animation_duration=300,
-            tabs=[
-                ft.Tab(text="Login", content=self.login_tab),
-                ft.Tab(text="S3", content=self.s3_tab),
-                ft.Tab(text="Monitoring Glue", content=self.monitoring_glue_tab),
-                ft.Tab(text="Monitoring STF", content=self.monitoring_stpf_tab)
-            ],
-            expand=True,
-            on_change=self.on_tab_change,
+            menu_item = ft.Container(
+                content=ft.Row([
+                    self.safe_icon(
+                        section["icon"],
+                        size=20,
+                        color=ft.Colors.WHITE if is_selected else ft.Colors.GREY_400,
+                        fallback_icon=ft.Icons.CIRCLE
+                    ),
+                    ft.Text(
+                        section["name"],
+                        size=14,
+                        color=ft.Colors.WHITE if is_selected else ft.Colors.GREY_400,
+                        weight=ft.FontWeight.BOLD if is_selected else ft.FontWeight.NORMAL
+                    )
+                ], alignment=ft.MainAxisAlignment.START, spacing=10),
+                padding=ft.Padding(15, 12, 15, 12),
+                margin=ft.Margin(5, 2, 5, 2),
+                bgcolor=ft.Colors.BLUE_700 if is_selected else ft.Colors.TRANSPARENT,
+                border_radius=8,
+                on_click=lambda e, section_id=section["id"]: self.on_sidebar_click(section_id),
+                ink=True
+            )
+            menu_items.append(menu_item)
+
+        return ft.Container(
+            content=ft.Column([
+                # Cabeçalho do sidebar
+                ft.Container(
+                    content=ft.Column([
+                        self.safe_icon(ft.Icons.CLOUD, size=40, color=ft.Colors.ORANGE, fallback_icon=ft.Icons.APPS),
+                        ft.Text("EMPS Dados Manager", size=16, weight=ft.FontWeight.BOLD, color=ft.Colors.WHITE),
+                    ], horizontal_alignment=ft.CrossAxisAlignment.CENTER, spacing=8),
+                    padding=ft.Padding(20, 20, 20, 30),
+                ),
+                ft.Divider(color=ft.Colors.GREY_600, height=1),
+                # Menu items
+                ft.Column(menu_items, spacing=0),
+            ], spacing=0),
+            width=280,  # Increased for better proportion on larger screens
+            bgcolor=ft.Colors.GREY_800,
+            padding=ft.Padding(0, 0, 0, 10),
         )
 
-        # Layout principal com abas e barra de status
+    def on_sidebar_click(self, section_id):
+        """Handler para cliques no sidebar"""
+        if self.current_section != section_id:
+            self.current_section = section_id
+            print(f"[SIDEBAR] Seção selecionada: {section_id}")
+
+            # Recriar sidebar com nova seleção
+            self.update_sidebar()
+
+            # Atualizar área de conteúdo
+            self.update_content_area()
+
+            # Carregar cache se necessário (apenas para abas de monitoring)
+            if section_id == "Monitoring Glue":
+                def load_cache():
+                    time.sleep(0.1)
+                    self.check_and_load_cache_on_tab_open("glue")
+                threading.Thread(target=load_cache, daemon=True).start()
+
+            elif section_id == "Monitoring STF":
+                def load_cache():
+                    time.sleep(0.1)
+                    self.check_and_load_cache_on_tab_open("stpf")
+                threading.Thread(target=load_cache, daemon=True).start()
+
+    def update_sidebar(self):
+        """Atualiza o sidebar com nova seleção"""
+        self.sidebar_container.content = self.create_sidebar().content
+        self.page.update()
+
+    def update_content_area(self):
+        """Atualiza a área de conteúdo baseada na seção atual"""
+        if self.current_section == "Login":
+            content = self.login_tab
+        elif self.current_section == "S3":
+            content = self.s3_tab
+        elif self.current_section == "Monitoring Glue":
+            content = self.monitoring_glue_tab
+        elif self.current_section == "Monitoring STF":
+            content = self.monitoring_stpf_tab
+        else:
+            content = self.login_tab
+
+        self.content_area.content = content
+        self.page.update()
+
+    def setup_layout_with_sidebar(self):
+        # Criar conteúdos das abas
+        self.login_tab = self.create_login_tab()
+        self.s3_tab = self.create_s3_tab()
+        self.monitoring_glue_tab = self.create_monitoring_tab()
+        self.monitoring_stpf_tab = self.create_monitoring_stpf_tab()
+
+        # Criar sidebar
+        self.sidebar_container = self.create_sidebar()
+
+        # Criar área de conteúdo principal - responsiva
+        self.content_area = ft.Container(
+            content=self.login_tab,  # Iniciar com Login
+            expand=True,
+            padding=ft.Padding(30, 30, 30, 30),  # More padding for larger screens
+            bgcolor=ft.Colors.GREY_900
+        )
+
+        # Layout principal com sidebar + conteúdo
+        content_layout = ft.Row([
+            self.sidebar_container,
+            ft.VerticalDivider(width=1, color=ft.Colors.GREY_600),
+            self.content_area
+        ], expand=True, spacing=0)
+
+        # Layout principal com conteúdo + barra de status
         main_layout = ft.Column([
-            self.tabs,
+            content_layout,
             self.status_bar
         ], expand=True, spacing=0)
 
         self.page.add(main_layout)
 
-    def on_tab_change(self, e):
-        """Handler chamado quando uma aba é selecionada"""
-        try:
-            selected_index = e.control.selected_index
-            tab_names = ["Login", "S3", "Monitoring Glue", "Monitoring STF"]
-
-            if selected_index < len(tab_names):
-                tab_name = tab_names[selected_index]
-                print(f"[TAB] Aba selecionada: {tab_name}")
-
-                # Verificar cache apenas para abas de monitoring
-                if tab_name == "Monitoring Glue":
-                    # Adicionar um pequeno delay para garantir que a UI foi atualizada
-                    def load_cache():
-                        time.sleep(0.1)  # Pequeno delay
-                        self.check_and_load_cache_on_tab_open("glue")
-
-                    threading.Thread(target=load_cache, daemon=True).start()
-
-                elif tab_name == "Monitoring STF":
-                    # Adicionar um pequeno delay para garantir que a UI foi atualizada
-                    def load_cache():
-                        time.sleep(0.1)  # Pequeno delay
-                        self.check_and_load_cache_on_tab_open("stpf")
-
-                    threading.Thread(target=load_cache, daemon=True).start()
-
-        except Exception as ex:
-            print(f"[ERROR] Erro no handler de mudanca de aba: {ex}")
+    # Método on_tab_change removido - agora usando navegação por sidebar
 
     def create_login_tab(self):
         self.status_text = ft.Text(
@@ -858,8 +951,6 @@ class AWSApp:
 
         # Configurar pasta de cache
         self.cache_dir = Path(os.path.expandvars("%localappdata%")) / "empsdados-manager"
-        self.glue_cache_file = self.cache_dir / "glue_cache.json"
-        self.stpf_cache_file = self.cache_dir / "stpf_cache.json"
 
         return ft.Container(
             content=ft.Column([
@@ -1369,7 +1460,7 @@ class AWSApp:
                 "glue_type": ""
             }
 
-    def fetch_glue_jobs(self, max_jobs=None):
+    def fetch_glue_jobs(self):
         """Busca jobs do AWS Glue e seus status usando processamento paralelo otimizado"""
         try:
             if not self.current_account_id:
@@ -1385,14 +1476,6 @@ class AWSApp:
             for page in paginator.paginate():
                 for job in page['Jobs']:
                     all_job_names.append(job['Name'])
-
-                    # Limitação para contas com muitos jobs
-                    if max_jobs and len(all_job_names) >= max_jobs:
-                        print(f"⚠️  Limitando a {max_jobs} jobs para melhor performance")
-                        break
-
-                if max_jobs and len(all_job_names) >= max_jobs:
-                    break
 
             if not all_job_names:
                 print("📋 Nenhum job encontrado na conta")
@@ -1465,6 +1548,13 @@ class AWSApp:
             self.page.update()
             return
 
+        # Verificar se cache é recente (menos de 15 minutos)
+        if self.is_cache_fresh("glue", 15):
+            self.monitoring_status.value = "⏰ Cache recente (menos de 15 min) - Use o cache existente para evitar custos adicionais"
+            self.monitoring_status.color = ft.Colors.BLUE
+            self.page.update()
+            return
+
         self.monitoring_progress.visible = True
         self.refresh_button.disabled = True
         self.monitoring_status.value = "Carregando jobs do Glue..."
@@ -1474,9 +1564,7 @@ class AWSApp:
         try:
             # Buscar jobs em thread separada para não bloquear UI
             def fetch_in_background():
-                # Opção de limitar jobs para contas com muitos jobs (opcional)
-                max_jobs_limit = getattr(self, 'max_glue_jobs', 200)  # Limitar a 200 jobs por padrão
-                jobs = self.fetch_glue_jobs(max_jobs=max_jobs_limit)
+                jobs = self.fetch_glue_jobs()
 
                 # Atualizar UI na thread principal
                 def update_ui():
@@ -1489,10 +1577,7 @@ class AWSApp:
 
                     self.last_update_text.value = f"Última atualização: {datetime.now().strftime('%H:%M:%S')}"
 
-                    if len(jobs) >= max_jobs_limit:
-                        self.monitoring_status.value = f"✅ {len(jobs)} jobs carregados (limitado a {max_jobs_limit})"
-                    else:
-                        self.monitoring_status.value = f"✅ {len(jobs)} jobs encontrados"
+                    self.monitoring_status.value = f"✅ {len(jobs)} jobs encontrados"
 
                     self.monitoring_status.color = ft.Colors.GREEN
 
@@ -1623,11 +1708,11 @@ class AWSApp:
             self.jobs_table.rows.append(row)
 
         self.jobs_success.value = str(success_count)
-        self.jobs_failed = str(failed_count)
-        self.jobs_running = str(running_count)
-        self.jobs_dpu_hours = str(total_dpu_hours)
-        self.jobs_time = str(total_minutes)
-        self.jobs_flex = str(total_flex)
+        self.jobs_failed.value = str(failed_count)
+        self.jobs_running.value = str(running_count)
+        self.jobs_dpu_hours.value = str(round(total_dpu_hours, 2))
+        self.jobs_time.value = str(round(total_minutes, 1))
+        self.jobs_flex.value = str(total_flex)
 
         if hasattr(self, 'page'):
             self.page.update()
@@ -1738,6 +1823,13 @@ class AWSApp:
             self.page.update()
             return
 
+        # Verificar se cache é recente (menos de 15 minutos)
+        if self.is_cache_fresh("stpf", 15):
+            self.monitoring_status_sptf.value = "⏰ Cache recente (menos de 15 min) - Use o cache existente para evitar custos adicionais"
+            self.monitoring_status_sptf.color = ft.Colors.BLUE
+            self.page.update()
+            return
+
         self.monitoring_progress_stpf.visible = True
         self.refresh_button_stpf.disabled = True
         self.monitoring_status_sptf.value = "Carregando Step Functions..."
@@ -1780,74 +1872,139 @@ class AWSApp:
             self.page.update()
 
     def fetch_step_functions(self):
-        """Busca Step Functions do AWS e seus status"""
+        """Busca Step Functions do AWS e seus status usando processamento paralelo otimizado"""
         try:
             if not self.current_account_id:
                 return []
 
             sfn_client = boto3.client('stepfunctions')
 
-            # Buscar todas as state machines
+            # 1. Buscar lista de todas as state machines primeiro
+            print("🔍 Listando Step Functions...")
             paginator = sfn_client.get_paginator('list_state_machines')
-            state_machines = []
+            all_state_machines = []
 
             for page in paginator.paginate():
                 for sm in page['stateMachines']:
-                    sm_name = sm['name']
-                    sm_arn = sm['stateMachineArn']
+                    all_state_machines.append({
+                        'name': sm['name'],
+                        'arn': sm['stateMachineArn']
+                    })
 
-                    # Buscar última execução da state machine
+            if not all_state_machines:
+                print("📋 Nenhuma Step Function encontrada na conta")
+                return []
+
+            print(f"📊 {len(all_state_machines)} Step Functions encontradas")
+
+            # 2. Buscar detalhes em paralelo (otimizado)
+            state_machines = []
+            max_workers = min(10, max(3, len(all_state_machines) // 4))  # Threads adaptáveis (menos que Glue)
+
+            start_time = time.time()
+
+            with ThreadPoolExecutor(max_workers=max_workers) as executor:
+                # Criar client separado para cada thread (recomendação AWS)
+                future_to_sm = {
+                    executor.submit(self.fetch_single_stepfunction_details, boto3.client('stepfunctions'), sm['name'], sm['arn']): sm['name']
+                    for sm in all_state_machines
+                }
+
+                # Processar resultados conforme ficam prontos
+                completed = 0
+                for future in as_completed(future_to_sm):
                     try:
-                        executions_response = sfn_client.list_executions(
-                            stateMachineArn=sm_arn,
-                            maxResults=1
-                        )
+                        sm_data = future.result()
+                        state_machines.append(sm_data)
+                        completed += 1
 
-                        if executions_response['executions']:
-                            last_execution = executions_response['executions'][0]
-                            status = last_execution['status']
-                            start_time = last_execution.get('startDate')
-                            stop_time = last_execution.get('stopDate')
-
-                            if start_time:
-                                started_on_str = start_time.strftime("%Y-%m-%d %H:%M:%S")
-                            else:
-                                started_on_str = "N/A"
-
-                            # Calcular duração
-                            if start_time and stop_time:
-                                duration = stop_time - start_time
-                                duration_str = str(duration).split('.')[0]  # Remove microseconds
-                            elif start_time and status == 'RUNNING':
-                                duration = datetime.now(timezone.utc) - start_time
-                                duration_str = f"{str(duration).split('.')[0]} (em execução)"
-                            else:
-                                duration_str = "N/A"
-                        else:
-                            status = "NEVER_RUN"
-                            started_on_str = "Nunca executado"
-                            duration_str = "N/A"
-                            start_time = None
+                        # Log de progresso a cada 20%
+                        if completed % max(1, len(all_state_machines) // 5) == 0:
+                            progress = (completed / len(all_state_machines)) * 100
+                            print(f"📈 Progresso: {completed}/{len(all_state_machines)} ({progress:.0f}%)")
 
                     except Exception as e:
-                        status = "ERROR"
-                        started_on_str = f"Erro: {str(e)}"
-                        duration_str = "N/A"
-                        start_time = None
+                        sm_name = future_to_sm[future]
+                        print(f"❌ Erro ao processar Step Function {sm_name}: {e}")
+                        # Adicionar entrada com erro
+                        state_machines.append({
+                            'name': sm_name,
+                            'status': "ERROR",
+                            'last_execution': f"Erro: {str(e)}",
+                            'duration': "N/A",
+                            'start_time_obj': None
+                        })
 
-                    state_machines.append({
-                        'name': sm_name,
-                        'status': status,
-                        'last_execution': started_on_str,
-                        'duration': duration_str,
-                        'start_time_obj': start_time  # Para ordenação
-                    })
+            end_time = time.time()
+            duration = end_time - start_time
+
+            print(f"⚡ Step Functions processadas em {duration:.2f}s ({max_workers} threads)")
+            print(f"📈 Performance: {len(all_state_machines)/duration:.1f} Step Functions/segundo")
 
             return state_machines
 
         except Exception as e:
             print(f"Erro ao buscar Step Functions: {e}")
             return []
+
+    def fetch_single_stepfunction_details(self, sfn_client, sm_name, sm_arn):
+        """Busca detalhes de uma única Step Function"""
+        try:
+            # Buscar última execução da state machine
+            try:
+                executions_response = sfn_client.list_executions(
+                    stateMachineArn=sm_arn,
+                    maxResults=1
+                )
+
+                if executions_response['executions']:
+                    last_execution = executions_response['executions'][0]
+                    status = last_execution['status']
+                    start_time = last_execution.get('startDate')
+                    stop_time = last_execution.get('stopDate')
+
+                    if start_time:
+                        started_on_str = start_time.strftime("%Y-%m-%d %H:%M:%S")
+                    else:
+                        started_on_str = "N/A"
+
+                    # Calcular duração
+                    if start_time and stop_time:
+                        duration = stop_time - start_time
+                        duration_str = str(duration).split('.')[0]  # Remove microseconds
+                    elif start_time and status == 'RUNNING':
+                        duration = datetime.now(timezone.utc) - start_time
+                        duration_str = f"{str(duration).split('.')[0]} (em execução)"
+                    else:
+                        duration_str = "N/A"
+                else:
+                    status = "NEVER_RUN"
+                    started_on_str = "Nunca executado"
+                    duration_str = "N/A"
+                    start_time = None
+
+            except Exception as e:
+                status = "ERROR"
+                started_on_str = f"Erro: {str(e)}"
+                duration_str = "N/A"
+                start_time = None
+
+            return {
+                'name': sm_name,
+                'status': status,
+                'last_execution': started_on_str,
+                'duration': duration_str,
+                'start_time_obj': start_time  # Para ordenação
+            }
+
+        except Exception as e:
+            return {
+                'name': sm_name,
+                'status': "ERROR",
+                'last_execution': f"Erro: {str(e)}",
+                'duration': "N/A",
+                'start_time_obj': None
+            }
 
     def update_stpf_table(self):
         """Atualiza a tabela de Step Functions com os dados filtrados"""
@@ -1872,6 +2029,17 @@ class AWSApp:
                 status_color = ft.Colors.YELLOW
                 running_count += 1
 
+            # Calcular métricas de tempo
+            duration = job.get("duration", "N/A")
+            if isinstance(duration, str) and duration != "N/A" and job["status"] != "RUNNING":
+                # Duração vem no formato "HH:MM:SS"
+                try:
+                    h, m, s = map(int, duration.split()[0].split(":"))
+                    minutes = h * 60 + m + s / 60
+                    total_minutes += minutes
+                except:
+                    pass
+
             row = ft.DataRow(
                 cells=[
                     ft.DataCell(ft.Text(job['name'], size=12, color=ft.Colors.WHITE)),
@@ -1886,7 +2054,7 @@ class AWSApp:
         self.stpf_success.value = str(success_count)
         self.stpf_failed.value = str(failed_count)
         self.stpf_running.value = str(running_count)
-        self.stpf_time.value = str(int(total_minutes))
+        self.stpf_time.value = str(round(total_minutes, 1))
 
         if hasattr(self, 'page'):
             self.page.update()
@@ -2033,14 +2201,70 @@ class AWSApp:
             print(f"❌ Erro ao criar pasta de cache: {e}")
             return False
 
+    def get_glue_cache_filename(self):
+        """Retorna o nome do arquivo de cache do Glue para a conta atual"""
+        if not self.current_account_id:
+            return self.cache_dir / "glue_cache.json"  # Fallback para casos sem account_id
+        return self.cache_dir / f"glue_cache_{self.current_account_id}.json"
+
+    def get_stpf_cache_filename(self):
+        """Retorna o nome do arquivo de cache do Step Functions para a conta atual"""
+        if not self.current_account_id:
+            return self.cache_dir / "stpf_cache.json"  # Fallback para casos sem account_id
+        return self.cache_dir / f"stpf_cache_{self.current_account_id}.json"
+
+    def is_cache_fresh(self, cache_type, minutes_threshold=15):
+        """Verifica se o cache é recente (menos de X minutos)"""
+        try:
+            if cache_type == "glue":
+                cache_file = self.get_glue_cache_filename()
+            elif cache_type == "stpf":
+                cache_file = self.get_stpf_cache_filename()
+            else:
+                return False
+
+            if not cache_file.exists():
+                return False
+
+            with open(cache_file, 'r', encoding='utf-8') as f:
+                cache_data = json.load(f)
+
+            # Verificar se é da conta/profile atual
+            if (cache_data.get("account_id") != self.current_account_id or
+                cache_data.get("profile") != self.current_profile):
+                return False
+
+            # Verificar timestamp
+            updated_at = cache_data.get("updated_at")
+            if not updated_at:
+                return False
+
+            # Converter timestamp para datetime
+            cache_time = datetime.fromisoformat(updated_at.replace('Z', '+00:00'))
+            current_time = datetime.now(timezone.utc)
+
+            # Calcular diferença em minutos
+            time_diff = (current_time - cache_time).total_seconds() / 60
+
+            is_fresh = time_diff < minutes_threshold
+            print(f"🕐 Cache {cache_type}: {time_diff:.1f} min atrás - {'fresco' if is_fresh else 'expirado'}")
+
+            return is_fresh
+
+        except Exception as e:
+            print(f"❌ Erro ao verificar cache {cache_type}: {e}")
+            return False
+
     def save_glue_cache(self, jobs_data):
         """Salva dados dos jobs Glue no cache local"""
         try:
             if not self.ensure_cache_directory():
                 return False
 
+            current_time = datetime.now().isoformat()
             cache_data = {
-                "timestamp": datetime.now().isoformat(),
+                "timestamp": current_time,
+                "updated_at": current_time,
                 "account_id": self.current_account_id,
                 "profile": self.current_profile,
                 "jobs_count": len(jobs_data),
@@ -2056,10 +2280,11 @@ class AWSApp:
                     job_copy['start_time_obj'] = None
                 cache_data["jobs"].append(job_copy)
 
-            with open(self.glue_cache_file, 'w', encoding='utf-8') as f:
+            cache_file = self.get_glue_cache_filename()
+            with open(cache_file, 'w', encoding='utf-8') as f:
                 json.dump(cache_data, f, indent=2, ensure_ascii=False)
 
-            print(f"💾 Cache Glue salvo: {len(jobs_data)} jobs em {self.glue_cache_file}")
+            print(f"💾 Cache Glue salvo: {len(jobs_data)} jobs em {cache_file}")
             return True
 
         except Exception as e:
@@ -2069,10 +2294,11 @@ class AWSApp:
     def load_glue_cache(self):
         """Carrega dados dos jobs Glue do cache local"""
         try:
-            if not self.glue_cache_file.exists():
+            cache_file = self.get_glue_cache_filename()
+            if not cache_file.exists():
                 return None
 
-            with open(self.glue_cache_file, 'r', encoding='utf-8') as f:
+            with open(cache_file, 'r', encoding='utf-8') as f:
                 cache_data = json.load(f)
 
             # Verificar se o cache é para a conta/profile atual
@@ -2105,8 +2331,10 @@ class AWSApp:
             if not self.ensure_cache_directory():
                 return False
 
+            current_time = datetime.now().isoformat()
             cache_data = {
-                "timestamp": datetime.now().isoformat(),
+                "timestamp": current_time,
+                "updated_at": current_time,
                 "account_id": self.current_account_id,
                 "profile": self.current_profile,
                 "stpf_count": len(stpf_data),
@@ -2122,10 +2350,11 @@ class AWSApp:
                     stpf_copy['start_time_obj'] = None
                 cache_data["step_functions"].append(stpf_copy)
 
-            with open(self.stpf_cache_file, 'w', encoding='utf-8') as f:
+            cache_file = self.get_stpf_cache_filename()
+            with open(cache_file, 'w', encoding='utf-8') as f:
                 json.dump(cache_data, f, indent=2, ensure_ascii=False)
 
-            print(f"💾 Cache STP salvo: {len(stpf_data)} Step Functions em {self.stpf_cache_file}")
+            print(f"💾 Cache STP salvo: {len(stpf_data)} Step Functions em {cache_file}")
             return True
 
         except Exception as e:
@@ -2135,10 +2364,11 @@ class AWSApp:
     def load_stpf_cache(self):
         """Carrega dados das Step Functions do cache local"""
         try:
-            if not self.stpf_cache_file.exists():
+            cache_file = self.get_stpf_cache_filename()
+            if not cache_file.exists():
                 return None
 
-            with open(self.stpf_cache_file, 'r', encoding='utf-8') as f:
+            with open(cache_file, 'r', encoding='utf-8') as f:
                 cache_data = json.load(f)
 
             # Verificar se o cache é para a conta/profile atual
