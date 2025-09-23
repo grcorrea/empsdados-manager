@@ -10,6 +10,7 @@ import time
 import ctypes
 import pyperclip
 import pandas as pd
+import random
 from datetime import datetime, timezone, timedelta
 from pathlib import Path
 from botocore.exceptions import ClientError, NoCredentialsError, ProfileNotFound
@@ -1985,6 +1986,28 @@ class AWSApp:
             self.refresh_button_stpf.disabled = False
             self.page.update()
 
+    def retry_with_backoff(self, func, max_retries=3, base_delay=1.0, *args, **kwargs):
+        """Executa função com retry e backoff exponencial para evitar throttling"""
+        for attempt in range(max_retries):
+            try:
+                return func(*args, **kwargs)
+            except Exception as e:
+                error_msg = str(e).lower()
+                # Verificar se é erro de throttling
+                if any(throttle_word in error_msg for throttle_word in ['throttling', 'rate exceeded', 'too many requests', 'requestlimitexceeded']):
+                    if attempt == max_retries - 1:  # Última tentativa
+                        print(f"❌ Throttling persistente após {max_retries} tentativas: {e}")
+                        raise
+
+                    # Calcular delay com jitter
+                    delay = base_delay * (2 ** attempt) + random.uniform(0, 1)
+                    print(f"⏳ Throttling detectado (tentativa {attempt + 1}/{max_retries}), aguardando {delay:.1f}s...")
+                    time.sleep(delay)
+                else:
+                    # Se não é throttling, falha imediatamente
+                    raise
+        return None
+
     def fetch_step_functions(self):
         """Busca Step Functions do AWS e seus status usando processamento paralelo otimizado"""
         try:
@@ -1993,17 +2016,22 @@ class AWSApp:
 
             sfn_client = boto3.client('stepfunctions')
 
-            # 1. Buscar lista de todas as state machines primeiro
-            print("🔍 Listando Step Functions...")
-            paginator = sfn_client.get_paginator('list_state_machines')
+            # 1. Buscar lista de todas as state machines primeiro (com retry)
+            print("🔍 Listando Step Functions com proteção anti-throttling...")
             all_state_machines = []
 
-            for page in paginator.paginate():
-                for sm in page['stateMachines']:
-                    all_state_machines.append({
-                        'name': sm['name'],
-                        'arn': sm['stateMachineArn']
-                    })
+            def list_state_machines_with_retry():
+                paginator = sfn_client.get_paginator('list_state_machines')
+                for page in paginator.paginate():
+                    # Pequeno delay entre páginas
+                    time.sleep(0.2)
+                    for sm in page['stateMachines']:
+                        all_state_machines.append({
+                            'name': sm['name'],
+                            'arn': sm['stateMachineArn']
+                        })
+
+            self.retry_with_backoff(list_state_machines_with_retry, max_retries=3, base_delay=2.0)
 
             if not all_state_machines:
                 print("📋 Nenhuma Step Function encontrada na conta")
@@ -2011,18 +2039,23 @@ class AWSApp:
 
             print(f"📊 {len(all_state_machines)} Step Functions encontradas")
 
-            # 2. Buscar detalhes em paralelo (otimizado)
+            # 2. Buscar detalhes em paralelo (otimizado contra throttling)
             state_machines = []
-            max_workers = min(10, max(3, len(all_state_machines) // 4))  # Threads adaptáveis (menos que Glue)
+            max_workers = min(5, max(2, len(all_state_machines) // 8))  # Reduzido drasticamente para evitar throttling
+            print(f"🔧 Usando {max_workers} workers para evitar throttling")
 
             start_time = time.time()
 
             with ThreadPoolExecutor(max_workers=max_workers) as executor:
-                # Criar client separado para cada thread (recomendação AWS)
-                future_to_sm = {
-                    executor.submit(self.fetch_single_stepfunction_details, boto3.client('stepfunctions'), sm['name'], sm['arn']): sm['name']
-                    for sm in all_state_machines
-                }
+                # Criar client separado para cada thread (recomendação AWS) com delay escalonado
+                future_to_sm = {}
+                for i, sm in enumerate(all_state_machines):
+                    # Pequeno delay progressivo entre submissões para evitar burst
+                    if i > 0:
+                        time.sleep(0.05)  # 50ms entre submissões
+
+                    future = executor.submit(self.fetch_single_stepfunction_details, boto3.client('stepfunctions'), sm['name'], sm['arn'])
+                    future_to_sm[future] = sm['name']
 
                 # Processar resultados conforme ficam prontos
                 completed = 0
@@ -2039,12 +2072,21 @@ class AWSApp:
 
                     except Exception as e:
                         sm_name = future_to_sm[future]
-                        print(f"❌ Erro ao processar Step Function {sm_name}: {e}")
+                        error_msg = str(e).lower()
+
+                        # Verificar se é erro de throttling
+                        if any(throttle_word in error_msg for throttle_word in ['throttling', 'rate exceeded', 'too many requests', 'requestlimitexceeded']):
+                            print(f"⚠️  Throttling detectado em Step Function {sm_name}: {e}")
+                            error_display = "THROTTLING - Tente novamente mais tarde"
+                        else:
+                            print(f"❌ Erro ao processar Step Function {sm_name}: {e}")
+                            error_display = f"Erro: {str(e)}"
+
                         # Adicionar entrada com erro
                         state_machines.append({
                             'name': sm_name,
                             'status': "ERROR",
-                            'last_execution': f"Erro: {str(e)}",
+                            'last_execution': error_display,
                             'duration': "N/A",
                             'start_time_obj': None
                         })
@@ -2052,8 +2094,8 @@ class AWSApp:
             end_time = time.time()
             duration = end_time - start_time
 
-            print(f"⚡ Step Functions processadas em {duration:.2f}s ({max_workers} threads)")
-            print(f"📈 Performance: {len(all_state_machines)/duration:.1f} Step Functions/segundo")
+            print(f"⚡ Step Functions processadas em {duration:.2f}s com {max_workers} threads (anti-throttling)")
+            print(f"📈 Performance: {len(all_state_machines)/duration:.1f} Step Functions/s - Processo otimizado para evitar erros de API")
 
             return state_machines
 
@@ -2062,11 +2104,17 @@ class AWSApp:
             return []
 
     def fetch_single_stepfunction_details(self, sfn_client, sm_name, sm_arn):
-        """Busca detalhes de uma única Step Function"""
+        """Busca detalhes de uma única Step Function com proteção contra throttling"""
         try:
-            # Buscar última execução da state machine
+            # Adicionar delay aleatório pequeno para espalhar requisições
+            time.sleep(random.uniform(0.1, 0.3))
+
+            # Buscar última execução da state machine com retry
             try:
-                executions_response = sfn_client.list_executions(
+                executions_response = self.retry_with_backoff(
+                    sfn_client.list_executions,
+                    max_retries=3,
+                    base_delay=1.0,
                     stateMachineArn=sm_arn,
                     maxResults=1
                 )
