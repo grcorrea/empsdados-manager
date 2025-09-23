@@ -349,7 +349,8 @@ class AWSApp:
             {"name": "Login", "icon": ft.Icons.LOGIN, "id": "Login"},
             {"name": "S3", "icon": ft.Icons.CLOUD, "id": "S3"},
             {"name": "Monitoring Glue", "icon": ft.Icons.DASHBOARD, "id": "Monitoring Glue"},
-            {"name": "Monitoring STF", "icon": ft.Icons.ANALYTICS, "id": "Monitoring STF"}
+            {"name": "Monitoring STF", "icon": ft.Icons.ANALYTICS, "id": "Monitoring STF"},
+            {"name": "Monitoring Table", "icon": ft.Icons.TABLE_CHART, "id": "Monitoring Table"}
         ]
 
         menu_items = []
@@ -440,6 +441,8 @@ class AWSApp:
             content = self.monitoring_glue_tab
         elif self.current_section == "Monitoring STF":
             content = self.monitoring_stpf_tab
+        elif self.current_section == "Monitoring Table":
+            content = self.monitoring_table_tab
         else:
             content = self.login_tab
 
@@ -452,6 +455,7 @@ class AWSApp:
         self.s3_tab = self.create_s3_tab()
         self.monitoring_glue_tab = self.create_monitoring_tab()
         self.monitoring_stpf_tab = self.create_monitoring_stpf_tab()
+        self.monitoring_table_tab = self.create_monitoring_table_tab()
 
         # Criar sidebar
         self.sidebar_container = self.create_sidebar()
@@ -1034,7 +1038,6 @@ class AWSApp:
         )
 
     def create_monitoring_stpf_tab(self):
-
         # Filtro de busca
         self.job_filter_stpf = ft.TextField(
             label="Filtrar Step Functions (separe por vírgula)",
@@ -1280,6 +1283,150 @@ class AWSApp:
             bgcolor=ft.Colors.GREY_900
         )
 
+    def create_monitoring_table_tab(self):
+        # Campo de busca
+        self.table_filter = ft.TextField(
+            label="Filtrar Tabelas",
+            width=300,
+            value=self.load_filter_text("table_monitoring"),
+            on_change=self.filter_jobs
+        )
+
+        # Botão de atualização manual
+        self.refresh_button_table = ft.ElevatedButton(
+            "🔄 Atualizar",
+            on_click=self.refresh_jobs,
+            width=130,
+            height=40,
+            style=ft.ButtonStyle(
+                shape=ft.RoundedRectangleBorder(radius=8),
+                elevation=3,
+            )
+        )
+
+        # Botões de exportação/copiar
+        self.copy_table_button = ft.IconButton(
+            icon=ft.Icons.COPY,
+            tooltip="Copiar tabela para clipboard",
+            on_click=self.copy_jobs_to_clipboard,
+            icon_size=20,
+            style=ft.ButtonStyle(
+                bgcolor=ft.Colors.BLUE_600,
+                color=ft.Colors.WHITE,
+                shape=ft.RoundedRectangleBorder(radius=8),
+            )
+        )
+
+        self.export_table_button = ft.IconButton(
+            icon=ft.Icons.FILE_DOWNLOAD,
+            tooltip="Exportar tabela para Excel",
+            on_click=self.export_jobs_to_excel,
+            icon_size=20,
+            style=ft.ButtonStyle(
+                bgcolor=ft.Colors.GREEN_600,
+                color=ft.Colors.WHITE,
+                shape=ft.RoundedRectangleBorder(radius=8),
+            )
+        )
+
+        # Progress e status
+        self.monitoring_progress_table = ft.ProgressRing(visible=False)
+        self.monitoring_status_table = ft.Text(
+            "Faça login primeiro para visualizar tabelas",
+            size=14,
+            color=ft.Colors.GREY_400
+        )
+
+        # Tabela de Monitoring Tables
+        self.table_monitoring = ft.DataTable(
+            columns=[
+                ft.DataColumn(ft.Text("Name", weight=ft.FontWeight.BOLD)),
+                ft.DataColumn(ft.Text("Database", weight=ft.FontWeight.BOLD)),
+                ft.DataColumn(ft.Text("Created Date", weight=ft.FontWeight.BOLD)),
+                ft.DataColumn(ft.Text("Last Updated", weight=ft.FontWeight.BOLD)),
+                ft.DataColumn(ft.Text("Type", weight=ft.FontWeight.BOLD)),
+                ft.DataColumn(ft.Text("NumberBuckets", weight=ft.FontWeight.BOLD)),
+            ],
+            rows=[],
+            expand=True
+        )
+
+        self.table_container = ft.Container(
+            content=self.table_monitoring,
+            expand=True,
+            bgcolor=ft.Colors.GREY_800,
+            border=ft.border.all(1, ft.Colors.GREY_700),
+            border_radius=12,
+            padding=15,
+            shadow=ft.BoxShadow(
+                spread_radius=0,
+                blur_radius=8,
+                color=ft.Colors.BLACK26,
+                offset=ft.Offset(0, 2),
+            )
+        )
+
+        return ft.Container(
+            content=ft.Column([
+                # Container de filtros e botões
+                ft.Container(
+                    content=ft.Row([
+                        self.table_filter,
+                        ft.Container(width=20),
+                        self.refresh_button_table,
+                        self.monitoring_progress_table,
+                        ft.Container(width=15),
+                        self.copy_table_button,
+                        ft.Container(width=5),
+                        self.export_table_button
+                    ], alignment=ft.MainAxisAlignment.START),
+                    padding=ft.padding.all(20),
+                    bgcolor=ft.Colors.GREY_800,
+                    border_radius=12,
+                    border=ft.border.all(1, ft.Colors.GREY_700),
+                    shadow=ft.BoxShadow(
+                        spread_radius=0,
+                        blur_radius=8,
+                        color=ft.Colors.BLACK26,
+                        offset=ft.Offset(0, 2),
+                    )
+                ),
+
+                ft.Container(height=15),
+
+                # Status com progress
+                ft.Container(
+                    content=ft.Row([
+                        self.monitoring_status_table,
+                        ft.Container(expand=True),
+                    ], alignment=ft.MainAxisAlignment.SPACE_BETWEEN),
+                    padding=ft.padding.symmetric(horizontal=20, vertical=12),
+                    bgcolor=ft.Colors.GREY_800,
+                    border_radius=8,
+                    border=ft.border.all(1, ft.Colors.GREY_700),
+                ),
+
+                ft.Container(height=15),
+
+                # Tabela
+                ft.Container(
+                    content=ft.Column([
+                        ft.Text("Monitoring Tables:", size=14, weight=ft.FontWeight.BOLD, color=ft.Colors.WHITE),
+                        ft.Container(height=10),
+                        self.table_container,
+                    ]),
+                    expand=True
+                ),
+            ],
+            spacing=8,
+            horizontal_alignment=ft.CrossAxisAlignment.STRETCH,
+            scroll=ft.ScrollMode.AUTO
+            ),
+            padding=25,
+            expand=True,
+            bgcolor=ft.Colors.GREY_900
+        ) 
+
     def update_s3_path(self, e=None):
         prefix = self.prefix_dropdown.value
         rt = self.rt_dropdown.value
@@ -1393,6 +1540,7 @@ class AWSApp:
         if hasattr(self, 'page'):
             self.page.update()
 
+    ############# JOBS GLUE ################
     def fetch_single_job_details(self, glue_client, job_name):
         """Busca detalhes de um único job Glue (para processamento paralelo)"""
         try:
@@ -1740,6 +1888,7 @@ class AWSApp:
             self.refresh_interval = 3600  # 1 hora
             self.filter_hours = 1
 
+    ############# STPF ################
     def update_refresh_interval_stpf(self, e=None):
         """Atualiza o intervalo de atualização automática e filtro por horas para STF"""
         try:
@@ -2006,6 +2155,7 @@ class AWSApp:
                 'start_time_obj': None
             }
 
+    ############# TABLES ################
     def update_stpf_table(self):
         """Atualiza a tabela de Step Functions com os dados filtrados"""
         self.stpf_table.rows.clear()
@@ -2058,6 +2208,148 @@ class AWSApp:
 
         if hasattr(self, 'page'):
             self.page.update()
+
+    def fetch_table_metadata(database: str, table_name: str):
+        """Busca detalhes de uma única tabela no Glue Catalog."""
+        try:
+            desc = wr.catalog.get_table(database=database, table=table_name)
+
+            created = desc.get("CreateTime")
+            updated = desc.get("UpdateTime")
+            input_format = desc.get("StorageDescriptor", {}).get("InputFormat", "")
+
+            # Detecta formato do arquivo
+            if "parquet" in input_format.lower():
+                fmt = "parquet"
+            elif "json" in input_format.lower():
+                fmt = "json"
+            elif "csv" in input_format.lower():
+                fmt = "csv"
+            else:
+                fmt = "unknown"
+
+            # Conta partições
+            partitions = len(desc.get("PartitionKeys", []))
+
+            return {
+                "name": table_name,
+                "database": database,
+                "created_date": created.strftime("%Y%m%d") if created else "N/A",
+                "last_updated": updated.strftime("%Y%m%d") if updated else "N/A",
+                "num_partitions": partitions,
+                "type": fmt,
+            }
+
+        except Exception as e:
+            return {
+                "name": table_name,
+                "database": database,
+                "created_date": "ERROR",
+                "last_updated": f"Erro: {str(e)}",
+                "num_partitions": 0,
+                "type": "unknown",
+            }
+
+    def fetch_all_tables(databases=["itau", "teste"], max_workers=10):
+        """Busca tabelas dos databases especificados usando threads."""
+        tables_metadata = []
+
+        with ThreadPoolExecutor(max_workers=max_workers) as executor:
+            futures = []
+            for db in databases:
+                try:
+                    tables = wr.catalog.tables(database=db).values
+                    for t in tables:
+                        futures.append(
+                            executor.submit(fetch_table_metadata, db, t)
+                        )
+                except Exception as e:
+                    print(f"❌ Erro ao listar tabelas no database {db}: {e}")
+
+            for future in as_completed(futures):
+                tables_metadata.append(future.result())
+
+        return tables_metadata
+
+    def update_tables_table(self, tables_data=None):
+        """
+        Atualiza a tabela da aba Monitoring Table.
+        Espera receber uma lista de dicts no formato:
+        {
+        'name': 'clientes',
+        'database': 'itau',
+        'created_date': '20230901',
+        'last_updated': '20250110',
+        'num_partitions': 3,
+        'type': 'parquet'
+        }
+        """
+        if tables_data is None:
+            tables_data = getattr(self, "all_tables", [])
+
+        # Limpa tabela atual
+        self.table_monitoring.rows.clear()
+
+        for tbl in tables_data:
+            row = ft.DataRow(
+                cells=[
+                    ft.DataCell(ft.Text(tbl.get("name", ""), size=12)),
+                    ft.DataCell(ft.Text(tbl.get("database", ""), size=12)),
+                    ft.DataCell(ft.Text(tbl.get("created_date", ""), size=12)),
+                    ft.DataCell(ft.Text(tbl.get("last_updated", ""), size=12)),
+                    ft.DataCell(ft.Text(tbl.get("type", ""), size=12)),
+                ]
+            )
+            self.table_monitoring.rows.append(row)
+
+        # Força refresh na UI
+        if hasattr(self, "page"):
+            self.page.update()
+
+    def refresh_table(self, e=None):
+        """Atualiza a lista de tabelas do Glue Catalog (Monitoring Table)."""
+        if not self.current_account_id:
+            self.monitoring_status_table.value = "Faça login primeiro para visualizar tabelas"
+            self.monitoring_status_table.color = ft.Colors.RED
+            self.page.update()
+            return
+
+        # Ativa progress
+        self.monitoring_progress_table.visible = True
+        self.refresh_button_table.disabled = True
+        self.monitoring_status_table.value = "Carregando tabelas do Glue..."
+        self.monitoring_status_table.color = ft.Colors.ORANGE
+        self.page.update()
+
+        def fetch_in_background():
+            try:
+                tables = fetch_all_tables(databases=["itau", "teste"])
+
+                def update_ui():
+                    self.all_tables = tables
+                    self.update_tables_table(tables)
+
+                    self.monitoring_status_table.value = f"✅ {len(tables)} tabelas encontradas"
+                    self.monitoring_status_table.color = ft.Colors.GREEN
+                    self.monitoring_progress_table.visible = False
+                    self.refresh_button_table.disabled = False
+                    self.page.update()
+
+                # Executa atualização da UI na thread principal
+                self.page.run_thread(update_ui)
+
+            except Exception as e:
+                def update_ui_error():
+                    self.monitoring_status_table.value = f"❌ Erro ao carregar tabelas: {str(e)}"
+                    self.monitoring_status_table.color = ft.Colors.RED
+                    self.monitoring_progress_table.visible = False
+                    self.refresh_button_table.disabled = False
+                    self.page.update()
+
+                self.page.run_thread(update_ui_error)
+
+        # Dispara thread para não travar UI
+        threading.Thread(target=fetch_in_background, daemon=True).start()
 
     def toggle_auto_refresh_stpf(self, e):
         """Ativa/desativa atualização automática para STF"""
