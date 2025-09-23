@@ -15,12 +15,6 @@ from datetime import datetime, timezone, timedelta
 from pathlib import Path
 from botocore.exceptions import ClientError, NoCredentialsError, ProfileNotFound
 from concurrent.futures import ThreadPoolExecutor, as_completed
-try:
-    import awswrangler as wr
-    HAS_AWSWRANGLER = True
-except ImportError:
-    HAS_AWSWRANGLER = False
-    print("AVISO: awswrangler nao encontrado. Funcionalidades de tabelas nao estarao disponiveis.")
 
 
 class AWSApp:
@@ -42,10 +36,59 @@ class AWSApp:
         self.current_section = "Login"  # Seção atual selecionada
         self.expanded_menus = {"Monitoring": False}  # Controla quais menus estão expandidos
 
+        # Pasta para salvar exports (padrão: Downloads)
+        self.export_folder = Path.home() / "Downloads"
+
+        # Configurar FilePicker
+        self.folder_picker = ft.FilePicker(
+            on_result=self.on_folder_selected
+        )
+        self.page.overlay.append(self.folder_picker)
+
         self.setup_page()
         self.setup_status_bar()
         self.setup_layout_with_sidebar()
         self.check_login_status()
+
+    def on_folder_selected(self, e: ft.FilePickerResultEvent):
+        """Callback quando uma pasta é selecionada para export"""
+        if e.path:
+            self.export_folder = Path(e.path)
+            print(f"📁 Pasta para export selecionada: {self.export_folder}")
+
+            # Executar callback se definido
+            if hasattr(self, 'callback_after_folder_selection') and self.callback_after_folder_selection:
+                try:
+                    self.callback_after_folder_selection()
+                    self.callback_after_folder_selection = None  # Limpar callback após uso
+                except Exception as e:
+                    print(f"❌ Erro ao executar callback após seleção de pasta: {e}")
+
+            # Mostrar feedback visual se houver uma aba ativa
+            try:
+                if hasattr(self, 'monitoring_status_eventbridge') and self.current_section == "EventBridge":
+                    self.monitoring_status_eventbridge.value = f"📁 Pasta selecionada: {self.export_folder.name}"
+                    self.monitoring_status_eventbridge.color = ft.Colors.BLUE
+                    self.page.update()
+                elif hasattr(self, 'monitoring_status_tables') and self.current_section == "Monitoring Tables":
+                    self.monitoring_status_tables.value = f"📁 Pasta selecionada: {self.export_folder.name}"
+                    self.monitoring_status_tables.color = ft.Colors.BLUE
+                    self.page.update()
+                elif hasattr(self, 'monitoring_status') and self.current_section == "Monitoring Glue":
+                    self.monitoring_status.value = f"📁 Pasta selecionada: {self.export_folder.name}"
+                    self.monitoring_status.color = ft.Colors.BLUE
+                    self.page.update()
+                elif hasattr(self, 'monitoring_status_sptf') and self.current_section == "Monitoring STF":
+                    self.monitoring_status_sptf.value = f"📁 Pasta selecionada: {self.export_folder.name}"
+                    self.monitoring_status_sptf.color = ft.Colors.BLUE
+                    self.page.update()
+            except:
+                pass  # Ignorar se não conseguir atualizar o status
+
+    def select_export_folder(self, callback_after_selection=None):
+        """Abre o seletor de pasta para escolher onde salvar exports"""
+        self.callback_after_folder_selection = callback_after_selection
+        self.folder_picker.get_directory_path(dialog_title="Escolha a pasta para salvar o arquivo Excel")
 
     def setup_environment(self):
         """Configura variáveis de ambiente necessárias"""
@@ -356,6 +399,7 @@ class AWSApp:
         sections = [
             {"name": "Login", "icon": ft.Icons.LOGIN, "id": "Login", "type": "page"},
             {"name": "S3", "icon": ft.Icons.CLOUD, "id": "S3", "type": "page"},
+            {"name": "EventBridge", "icon": ft.Icons.EVENT, "id": "EventBridge", "type": "page"},
             {
                 "name": "Monitoring",
                 "icon": ft.Icons.MONITOR,
@@ -527,6 +571,12 @@ class AWSApp:
                     self.check_and_load_cache_on_tab_open("tables")
                 threading.Thread(target=load_cache, daemon=True).start()
 
+            elif section_id == "EventBridge":
+                def load_cache():
+                    time.sleep(0.1)
+                    self.check_and_load_cache_on_tab_open("eventbridge")
+                threading.Thread(target=load_cache, daemon=True).start()
+
     def update_sidebar(self):
         """Atualiza o sidebar com nova seleção"""
         self.sidebar_container.content = self.create_sidebar().content
@@ -544,6 +594,8 @@ class AWSApp:
             content = self.monitoring_stpf_tab
         elif self.current_section == "Monitoring Tables":
             content = self.monitoring_tables_tab
+        elif self.current_section == "EventBridge":
+            content = self.monitoring_eventbridge_tab
         else:
             content = self.login_tab
 
@@ -557,6 +609,7 @@ class AWSApp:
         self.monitoring_glue_tab = self.create_monitoring_tab()
         self.monitoring_stpf_tab = self.create_monitoring_stpf_tab()
         self.monitoring_tables_tab = self.create_monitoring_tables_tab()
+        self.monitoring_eventbridge_tab = self.create_monitoring_eventbridge_tab()
 
         # Criar sidebar
         self.sidebar_container = self.create_sidebar()
@@ -2286,7 +2339,7 @@ class AWSApp:
             self.monitoring_status_sptf.color = ft.Colors.RED
             self.page.update()
 
-    def export_stpf_to_excel(self, e):
+    def export_stpf_to_excel(self, e=None):
         """Exporta a tabela filtrada de Step Functions para Excel"""
         try:
             if not self.filtered_stpf:
@@ -2295,27 +2348,47 @@ class AWSApp:
                 self.page.update()
                 return
 
+            # Mostrar status de escolha de pasta
+            self.monitoring_status_sptf.value = "📁 Escolha onde salvar o arquivo..."
+            self.monitoring_status_sptf.color = ft.Colors.BLUE
+            self.page.update()
+
             # Preparar dados para DataFrame
-            data = []
+            self.export_data_stpf = []
             for stpf in self.filtered_stpf:
-                data.append({
+                self.export_data_stpf.append({
                     'Name': stpf['name'],
                     'Status': stpf['status'],
                     'Última Execução': stpf['last_execution'],
                     'Duração': stpf['duration']
                 })
 
-            # Criar DataFrame
-            df = pd.DataFrame(data)
+            # Abrir seletor de pasta
+            self.select_export_folder(self._export_stpf_after_folder_selection)
 
-            # Gerar nome do arquivo com timestamp
+        except Exception as e:
+            self.monitoring_status_sptf.value = f"❌ Erro ao preparar export: {str(e)}"
+            self.monitoring_status_sptf.color = ft.Colors.RED
+            self.page.update()
+
+    def _export_stpf_after_folder_selection(self):
+        """Executa o export Step Functions após a pasta ser selecionada"""
+        try:
+            # Criar DataFrame
+            df = pd.DataFrame(self.export_data_stpf)
+
+            # Nome do arquivo com timestamp
             timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
             filename = f"step_functions_{timestamp}.xlsx"
 
-            # Exportar para Excel
-            df.to_excel(filename, index=False, engine='openpyxl')
+            # Caminho completo usando a pasta selecionada
+            file_path = self.export_folder / filename
 
-            self.monitoring_status_sptf.value = f"✅ {len(self.filtered_stpf)} Step Functions exportadas para {filename}"
+            # Exportar
+            df.to_excel(file_path, index=False, engine='openpyxl')
+
+            # Feedback visual
+            self.monitoring_status_sptf.value = f"✅ Exportado para {file_path.parent.name}/{filename}"
             self.monitoring_status_sptf.color = ft.Colors.GREEN
             self.page.update()
 
@@ -2646,8 +2719,71 @@ class AWSApp:
             print(f"❌ Erro ao carregar cache Tables: {e}")
             return None
 
+    def get_eventbridge_cache_filename(self):
+        """Retorna o nome do arquivo de cache do EventBridge para a conta atual"""
+        if not self.current_account_id:
+            return self.cache_dir / "eventbridge_cache.json"  # Fallback para casos sem account_id
+        return self.cache_dir / f"eventbridge_cache_{self.current_account_id}.json"
+
+    def save_eventbridge_cache(self, rules_data):
+        """Salva dados das regras EventBridge no cache local"""
+        try:
+            if not self.ensure_cache_directory():
+                return False
+
+            current_time = datetime.now(timezone.utc).isoformat()
+            cache_data = {
+                "timestamp": current_time,
+                "updated_at": current_time,
+                "account_id": self.current_account_id,
+                "profile": self.current_profile,
+                "rules_count": len(rules_data),
+                "rules": rules_data  # Rules data is already JSON serializable
+            }
+
+            cache_file = self.get_eventbridge_cache_filename()
+            with open(cache_file, 'w', encoding='utf-8') as f:
+                json.dump(cache_data, f, indent=2, ensure_ascii=False)
+
+            print(f"💾 Cache EventBridge salvo: {len(rules_data)} regras em {cache_file}")
+            return True
+
+        except Exception as e:
+            print(f"❌ Erro ao salvar cache EventBridge: {e}")
+            return False
+
+    def load_eventbridge_cache(self):
+        """Carrega dados das regras EventBridge do cache local"""
+        try:
+            cache_file = self.get_eventbridge_cache_filename()
+            if not cache_file.exists():
+                return None
+
+            with open(cache_file, 'r', encoding='utf-8') as f:
+                cache_data = json.load(f)
+
+            # Verificar se o cache é para a conta/profile atual
+            if (cache_data.get("account_id") != self.current_account_id or
+                cache_data.get("profile") != self.current_profile):
+                print("🔄 Cache EventBridge é de outra conta/profile, ignorando...")
+                return None
+
+            # Verificar se o cache não está muito antigo (15 minutos)
+            if not self.is_cache_fresh_by_data(cache_data, minutes_threshold=15):
+                print("⏰ Cache EventBridge está muito antigo (>15 min), ignorando...")
+                return None
+
+            rules_list = cache_data.get("rules", [])
+            cache_timestamp = cache_data.get("timestamp", "")
+            print(f"📁 Cache EventBridge carregado: {len(rules_list)} regras (salvo em {cache_timestamp})")
+            return rules_list
+
+        except Exception as e:
+            print(f"❌ Erro ao carregar cache EventBridge: {e}")
+            return None
+
     def check_and_load_cache_on_tab_open(self, tab_type):
-        """Verifica cache ao abrir aba e carrega se disponível"""
+        """Verifica cache ao abrir aba e carrega conforme regras de atualização automática"""
         if not self.current_account_id:
             return  # Não fazer nada se não estiver logado
 
@@ -2655,45 +2791,79 @@ class AWSApp:
             # Tentar carregar cache do Glue
             cached_jobs = self.load_glue_cache()
             if cached_jobs:
+                # Cache encontrado - carregar sempre
                 self.all_jobs = cached_jobs
                 self.filter_jobs()
                 self.monitoring_status.value = f"📁 {len(cached_jobs)} jobs carregados do cache"
                 self.monitoring_status.color = ft.Colors.BLUE
                 self.last_update_text.value = f"Cache carregado: {datetime.now().strftime('%H:%M:%S')}"
                 self.page.update()
+
+                # Verificar se deve atualizar automaticamente
+                if hasattr(self, 'auto_refresh_enabled') and self.auto_refresh_enabled.value:
+                    print("🔄 Auto-refresh ativo - Atualizando dados do Glue...")
+                    self.refresh_jobs()
+                else:
+                    print("📁 Cache carregado - Auto-refresh inativo, use o botão Atualizar se necessário")
             else:
                 # Não tem cache, carregar dados automaticamente
                 print("🔄 Cache Glue não encontrado, carregando dados...")
                 self.refresh_jobs()
 
         elif tab_type == "stpf":
-            # Tentar carregar cache do STP
+            # Tentar carregar cache do Step Functions
             cached_stpf = self.load_stpf_cache()
             if cached_stpf:
+                # Cache encontrado - carregar sempre
                 self.all_stpf = cached_stpf
                 self.filter_stpf_jobs()
                 self.monitoring_status_sptf.value = f"📁 {len(cached_stpf)} Step Functions carregadas do cache"
                 self.monitoring_status_sptf.color = ft.Colors.BLUE
                 self.last_update_text_stpf.value = f"Cache carregado: {datetime.now().strftime('%H:%M:%S')}"
                 self.page.update()
+
+                # Verificar se deve atualizar automaticamente
+                if hasattr(self, 'auto_refresh_enabled_stpf') and self.auto_refresh_enabled_stpf.value:
+                    print("🔄 Auto-refresh ativo - Atualizando dados do Step Functions...")
+                    self.refresh_stpf_jobs()
+                else:
+                    print("📁 Cache carregado - Auto-refresh inativo, use o botão Atualizar se necessário")
             else:
                 # Não tem cache, carregar dados automaticamente
-                print("🔄 Cache STP não encontrado, carregando dados...")
+                print("🔄 Cache Step Functions não encontrado, carregando dados...")
                 self.refresh_stpf_jobs()
 
         elif tab_type == "tables":
             # Tentar carregar cache das Tabelas
             cached_tables = self.load_tables_cache()
             if cached_tables:
+                # Cache encontrado - só carregar cache (Tables não tem auto-refresh)
                 self.all_tables = cached_tables
                 self.filter_tables()
                 self.monitoring_status_tables.value = f"📁 {len(cached_tables)} tabelas carregadas do cache"
                 self.monitoring_status_tables.color = ft.Colors.BLUE
                 self.page.update()
+                print("📁 Cache Tables carregado - Use o botão Atualizar para buscar dados atualizados")
             else:
                 # Não tem cache, carregar dados automaticamente
                 print("🔄 Cache Tables não encontrado, carregando dados...")
                 self.refresh_tables()
+
+        elif tab_type == "eventbridge":
+            # Tentar carregar cache do EventBridge
+            cached_rules = self.load_eventbridge_cache()
+            if cached_rules:
+                # Cache encontrado - só carregar cache (EventBridge não tem auto-refresh)
+                self.all_eventbridge_rules = cached_rules
+                self.filter_eventbridge_rules()
+                self.monitoring_status_eventbridge.value = f"📁 {len(cached_rules)} regras EventBridge carregadas do cache"
+                self.monitoring_status_eventbridge.color = ft.Colors.BLUE
+                self.page.update()
+                print("📁 Cache EventBridge carregado - Use o botão Atualizar para buscar dados atualizados")
+            else:
+                # Não tem cache, carregar dados automaticamente
+                print("🔄 Cache EventBridge não encontrado, carregando dados...")
+                self.refresh_eventbridge_rules()
 
     def copy_jobs_to_clipboard(self, e):
         """Copia a tabela filtrada de jobs Glue para o clipboard"""
@@ -2741,29 +2911,58 @@ class AWSApp:
                 self.page.update()
                 return
 
+            # Mostrar status de escolha de pasta
+            self.monitoring_status.value = "📁 Escolha onde salvar o arquivo..."
+            self.monitoring_status.color = ft.Colors.BLUE
+            self.page.update()
+
             # Preparar dados para DataFrame
-            data = []
+            self.export_data_jobs = []
             for job in self.filtered_jobs:
-                data.append({
+                self.export_data_jobs.append({
                     'Job Name': job['name'],
                     'Status': job['status'],
                     'Última Execução': job['last_execution'],
                     'Duração': job['duration']
                 })
 
+            # Abrir seletor de pasta e executar export após seleção
+            self.select_export_folder(self._export_jobs_after_folder_selection)
+
+        except Exception as e:
+            self.monitoring_status.value = f"❌ Erro ao preparar export: {str(e)}"
+            self.monitoring_status.color = ft.Colors.RED
+            self.page.update()
+
+    def _export_jobs_after_folder_selection(self):
+        """Executa o export Glue Jobs após a pasta ser selecionada"""
+        try:
             # Criar DataFrame
-            df = pd.DataFrame(data)
+            df = pd.DataFrame(self.export_data_jobs)
 
             # Gerar nome do arquivo com timestamp
             timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
             filename = f"glue_jobs_{timestamp}.xlsx"
 
-            # Exportar para Excel
-            df.to_excel(filename, index=False, engine='openpyxl')
+            # Caminho completo usando a pasta selecionada
+            file_path = self.export_folder / filename
 
-            self.monitoring_status.value = f"✅ {len(self.filtered_jobs)} jobs exportados para {filename}"
+            # Exportar para Excel
+            df.to_excel(file_path, index=False, engine='openpyxl')
+
+            # Feedback visual
+            self.monitoring_status.value = f"✅ Exportado para {file_path.parent.name}/{filename}"
             self.monitoring_status.color = ft.Colors.GREEN
             self.page.update()
+
+            # Reset status após 5 segundos
+            def reset_status():
+                time.sleep(5)
+                self.monitoring_status.value = f"✅ {len(self.export_data_jobs)} jobs Glue encontrados"
+                self.monitoring_status.color = ft.Colors.GREEN
+                self.page.update()
+
+            threading.Thread(target=reset_status, daemon=True).start()
 
         except Exception as e:
             self.monitoring_status.value = f"❌ Erro ao exportar: {str(e)}"
@@ -3217,99 +3416,218 @@ class AWSApp:
         self.page.update()
 
     # Table Monitoring Functions
-    @staticmethod
-    def fetch_table_metadata(database: str, table_name: str):
-        """Busca detalhes de uma única tabela no Glue Catalog."""
-        if not HAS_AWSWRANGLER:
-            return {
-                "name": table_name,
-                "database": database,
-                "created_date": "N/A",
-                "last_updated": "awswrangler nao disponivel",
-                "num_partitions": 0,
-                "type": "unknown",
-            }
+    def fetch_table_metadata(self, database: str, table_name: str):
+        """Busca detalhes de uma única tabela no Glue Catalog usando boto3."""
         try:
-            desc = wr.catalog.get_table(database=database, table=table_name)
+            # Usar retry para evitar throttling
+            def get_table_details():
+                glue_client = boto3.client('glue')
+                return glue_client.get_table(DatabaseName=database, Name=table_name)
 
-            created = desc.get("CreateTime")
-            updated = desc.get("UpdateTime")
-            input_format = desc.get("StorageDescriptor", {}).get("InputFormat", "")
+            response = self.retry_with_backoff(get_table_details, max_retries=3, base_delay=0.5)
+            table = response['Table']
 
-            # Detecta formato do arquivo
+            # Informações básicas da tabela
+            created = table.get("CreateTime")
+            updated = table.get("UpdateTime")
+
+            # Detectar formato baseado no StorageDescriptor
+            storage_desc = table.get("StorageDescriptor", {})
+            input_format = storage_desc.get("InputFormat", "")
+            location = storage_desc.get("Location", "")
+
+            # Detectar formato do arquivo
             if "parquet" in input_format.lower():
                 fmt = "parquet"
             elif "json" in input_format.lower():
                 fmt = "json"
-            elif "csv" in input_format.lower():
+            elif "csv" in input_format.lower() or "text" in input_format.lower():
                 fmt = "csv"
+            elif "orc" in input_format.lower():
+                fmt = "orc"
             else:
                 fmt = "unknown"
 
-            # Conta partições
-            partitions = len(desc.get("PartitionKeys", []))
+            # Contar partições
+            partition_keys = table.get("PartitionKeys", [])
+            num_partitions = len(partition_keys)
+
+            # Buscar data mais recente dos arquivos (se tiver localização S3)
+            last_file_modified = None
+            if location and location.startswith("s3://"):
+                last_file_modified = self.get_latest_file_modification_date(location)
 
             return {
                 "name": table_name,
                 "database": database,
-                "created_date": created.strftime("%Y%m%d") if created else "N/A",
-                "last_updated": updated.strftime("%Y%m%d") if updated else "N/A",
-                "num_partitions": partitions,
+                "created_date": created.strftime("%Y-%m-%d") if created else "N/A",
+                "last_updated": updated.strftime("%Y-%m-%d %H:%M") if updated else "N/A",
+                "last_file_modified": last_file_modified.strftime("%Y-%m-%d %H:%M") if last_file_modified else "N/A",
+                "num_partitions": num_partitions,
                 "type": fmt,
+                "location": location[:50] + "..." if len(location) > 50 else location,
             }
 
         except Exception as e:
+            print(f"❌ Erro ao buscar metadados da tabela {table_name}: {e}")
             return {
                 "name": table_name,
                 "database": database,
                 "created_date": "ERROR",
                 "last_updated": f"Erro: {str(e)}",
+                "last_file_modified": "N/A",
                 "num_partitions": 0,
                 "type": "unknown",
+                "location": "N/A",
             }
 
-    @staticmethod
-    def fetch_all_tables(databases=["itau", "teste"], max_workers=10):
-        """Busca tabelas dos databases especificados usando threads."""
-        if not HAS_AWSWRANGLER:
-            # Retornar dados de exemplo quando awswrangler não está disponível
-            return [
-                {
-                    "name": "tabela_exemplo_1",
-                    "database": "itau",
-                    "created_date": "20240101",
-                    "last_updated": "20240101",
-                    "num_partitions": 0,
-                    "type": "awswrangler indisponivel"
-                },
-                {
-                    "name": "tabela_exemplo_2",
-                    "database": "teste",
-                    "created_date": "20240101",
-                    "last_updated": "20240101",
-                    "num_partitions": 0,
-                    "type": "awswrangler indisponivel"
-                }
-            ]
+    def get_latest_file_modification_date(self, s3_location):
+        """Busca a data de modificação mais recente dos arquivos em uma localização S3."""
+        try:
+            # Parse da localização S3
+            if not s3_location.startswith("s3://"):
+                return None
 
-        tables_metadata = []
+            s3_path = s3_location[5:]  # Remove 's3://'
+            bucket = s3_path.split('/')[0]
+            prefix = '/'.join(s3_path.split('/')[1:]) if len(s3_path.split('/')) > 1 else ""
 
-        with ThreadPoolExecutor(max_workers=max_workers) as executor:
-            futures = []
-            for db in databases:
+            # Usar retry para evitar throttling
+            def list_s3_objects():
+                s3_client = boto3.client('s3')
+                paginator = s3_client.get_paginator('list_objects_v2')
+
+                latest_date = None
+                object_count = 0
+
+                # Limitar a 100 objetos para reduzir custos
+                for page in paginator.paginate(Bucket=bucket, Prefix=prefix, PaginationConfig={'MaxItems': 100}):
+                    if 'Contents' in page:
+                        for obj in page['Contents']:
+                            object_count += 1
+                            last_modified = obj['LastModified']
+
+                            # Manter apenas a data mais recente
+                            if latest_date is None or last_modified > latest_date:
+                                latest_date = last_modified
+
+                            # Parar depois de 50 objetos para evitar custos excessivos
+                            if object_count >= 50:
+                                break
+
+                    # Quebrar loop externo também
+                    if object_count >= 50:
+                        break
+
+                print(f"📊 S3: Verificados {object_count} objetos em {s3_location[:50]}...")
+                return latest_date
+
+            return self.retry_with_backoff(list_s3_objects, max_retries=2, base_delay=0.5)
+
+        except Exception as e:
+            print(f"⚠️  Erro ao buscar data dos arquivos S3 em {s3_location}: {e}")
+            return None
+
+    def fetch_all_tables(self, databases=["itau", "teste"], max_workers=3):
+        """Busca tabelas dos databases especificados usando boto3 e threads otimizadas."""
+        try:
+            if not self.current_account_id:
+                print("❌ Necessário estar logado para buscar tabelas")
+                return []
+
+            print(f"🔍 Buscando tabelas nos databases: {databases}")
+            all_table_names = []
+
+            # 1. Primeiro, listar todas as tabelas por database (com throttling protection)
+            glue_client = boto3.client('glue')
+
+            for database in databases:
                 try:
-                    tables = wr.catalog.tables(database=db).values
-                    for t in tables:
-                        futures.append(
-                            executor.submit(AWSApp.fetch_table_metadata, db, t)
-                        )
+                    def list_tables_in_db():
+                        paginator = glue_client.get_paginator('get_tables')
+                        tables_in_db = []
+
+                        for page in paginator.paginate(DatabaseName=database):
+                            # Pequeno delay entre páginas
+                            time.sleep(0.1)
+                            for table in page['TableList']:
+                                tables_in_db.append({
+                                    'name': table['Name'],
+                                    'database': database
+                                })
+                        return tables_in_db
+
+                    tables_in_db = self.retry_with_backoff(list_tables_in_db, max_retries=3, base_delay=1.0)
+                    all_table_names.extend(tables_in_db)
+                    print(f"📊 Database '{database}': {len(tables_in_db)} tabelas encontradas")
+
                 except Exception as e:
-                    print(f"❌ Erro ao listar tabelas no database {db}: {e}")
+                    print(f"❌ Erro ao listar tabelas no database {database}: {e}")
 
-            for future in as_completed(futures):
-                tables_metadata.append(future.result())
+            if not all_table_names:
+                print("📋 Nenhuma tabela encontrada nos databases especificados")
+                return []
 
-        return tables_metadata
+            print(f"📈 Total: {len(all_table_names)} tabelas para processar")
+
+            # 2. Buscar metadados em paralelo (com menos workers para evitar throttling)
+            tables_metadata = []
+            # Reduzir workers para evitar throttling em operações de metadados + S3
+            actual_workers = min(max_workers, max(2, len(all_table_names) // 10))
+            print(f"🔧 Usando {actual_workers} workers (otimizado para evitar throttling)")
+
+            start_time = time.time()
+
+            with ThreadPoolExecutor(max_workers=actual_workers) as executor:
+                # Submeter jobs com delay para evitar burst
+                future_to_table = {}
+                for i, table_info in enumerate(all_table_names):
+                    # Delay progressivo entre submissões
+                    if i > 0:
+                        time.sleep(0.1)
+
+                    future = executor.submit(self.fetch_table_metadata, table_info['database'], table_info['name'])
+                    future_to_table[future] = f"{table_info['database']}.{table_info['name']}"
+
+                # Processar resultados
+                completed = 0
+                for future in as_completed(future_to_table):
+                    try:
+                        table_data = future.result()
+                        tables_metadata.append(table_data)
+                        completed += 1
+
+                        # Log de progresso a cada 25%
+                        if completed % max(1, len(all_table_names) // 4) == 0:
+                            progress = (completed / len(all_table_names)) * 100
+                            print(f"📈 Progresso: {completed}/{len(all_table_names)} ({progress:.0f}%)")
+
+                    except Exception as e:
+                        table_name = future_to_table[future]
+                        print(f"❌ Erro ao processar tabela {table_name}: {e}")
+                        # Adicionar entrada com erro
+                        db_name, tbl_name = table_name.split('.', 1)
+                        tables_metadata.append({
+                            'name': tbl_name,
+                            'database': db_name,
+                            'created_date': "ERROR",
+                            'last_updated': f"Erro: {str(e)}",
+                            'last_file_modified': "N/A",
+                            'num_partitions': 0,
+                            'type': "unknown",
+                            'location': "N/A"
+                        })
+
+            end_time = time.time()
+            duration = end_time - start_time
+            print(f"⚡ Tabelas processadas em {duration:.2f}s com {actual_workers} workers")
+            print(f"📊 Performance: {len(all_table_names)/duration:.1f} tabelas/s")
+
+            return tables_metadata
+
+        except Exception as e:
+            print(f"❌ Erro geral ao buscar tabelas: {e}")
+            return []
 
     def update_tables_table(self, tables_data=None):
         """
@@ -3328,6 +3646,7 @@ class AWSApp:
                     ft.DataCell(ft.Text(tbl.get("database", ""), size=12)),
                     ft.DataCell(ft.Text(tbl.get("created_date", ""), size=12)),
                     ft.DataCell(ft.Text(tbl.get("last_updated", ""), size=12)),
+                    ft.DataCell(ft.Text(tbl.get("last_file_modified", "N/A"), size=12)),
                     ft.DataCell(ft.Text(tbl.get("type", ""), size=12)),
                     ft.DataCell(ft.Text(str(tbl.get("num_partitions", 0)), size=12)),
                 ]
@@ -3452,8 +3771,9 @@ class AWSApp:
             columns=[
                 ft.DataColumn(ft.Text("Name", weight=ft.FontWeight.BOLD)),
                 ft.DataColumn(ft.Text("Database", weight=ft.FontWeight.BOLD)),
-                ft.DataColumn(ft.Text("Created Date", weight=ft.FontWeight.BOLD)),
+                ft.DataColumn(ft.Text("Created", weight=ft.FontWeight.BOLD)),
                 ft.DataColumn(ft.Text("Last Updated", weight=ft.FontWeight.BOLD)),
+                ft.DataColumn(ft.Text("Files Modified", weight=ft.FontWeight.BOLD)),
                 ft.DataColumn(ft.Text("Type", weight=ft.FontWeight.BOLD)),
                 ft.DataColumn(ft.Text("Partitions", weight=ft.FontWeight.BOLD)),
             ],
@@ -3566,7 +3886,7 @@ class AWSApp:
                 return
 
             # Cabeçalhos
-            headers = ["Name", "Database", "Created Date", "Last Updated", "Type", "Partitions"]
+            headers = ["Name", "Database", "Created", "Last Updated", "Files Modified", "Type", "Partitions"]
 
             # Dados das linhas
             data = []
@@ -3608,36 +3928,52 @@ class AWSApp:
             if not hasattr(self, 'table_monitoring') or not self.table_monitoring.rows:
                 return
 
+            # Mostrar status de escolha de pasta
+            self.monitoring_status_tables.value = "📁 Escolha onde salvar o arquivo..."
+            self.monitoring_status_tables.color = ft.Colors.BLUE
+            self.page.update()
+
             # Preparar dados
-            data = []
+            self.export_data_tables = []
             for row in self.table_monitoring.rows:
                 row_data = []
                 for cell in row.cells:
                     row_data.append(cell.content.value if hasattr(cell.content, 'value') else str(cell.content))
-                data.append(row_data)
+                self.export_data_tables.append(row_data)
 
+            # Abrir seletor de pasta e executar export após seleção
+            self.select_export_folder(self._export_tables_after_folder_selection)
+
+        except Exception as e:
+            self.monitoring_status_tables.value = f"❌ Erro ao preparar export: {str(e)}"
+            self.monitoring_status_tables.color = ft.Colors.RED
+            self.page.update()
+
+    def _export_tables_after_folder_selection(self):
+        """Executa o export Tables após a pasta ser selecionada"""
+        try:
             # Criar DataFrame
-            df = pd.DataFrame(data, columns=["Name", "Database", "Created Date", "Last Updated", "Type", "Partitions"])
+            df = pd.DataFrame(self.export_data_tables, columns=["Name", "Database", "Created", "Last Updated", "Files Modified", "Type", "Partitions"])
 
             # Nome do arquivo com timestamp
             timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
             filename = f"monitoring_tables_{timestamp}.xlsx"
 
-            # Caminho completo
-            downloads_path = Path.home() / "Downloads" / filename
+            # Caminho completo usando a pasta selecionada
+            file_path = self.export_folder / filename
 
             # Exportar
-            df.to_excel(downloads_path, index=False, engine='openpyxl')
+            df.to_excel(file_path, index=False, engine='openpyxl')
 
             # Feedback visual
-            self.monitoring_status_tables.value = f"✅ Exportado para {filename}"
+            self.monitoring_status_tables.value = f"✅ Exportado para {file_path.parent.name}/{filename}"
             self.monitoring_status_tables.color = ft.Colors.GREEN
             self.page.update()
 
             # Reset status após 5 segundos
             def reset_status():
                 time.sleep(5)
-                self.monitoring_status_tables.value = f"✅ {len(data)} tabelas encontradas"
+                self.monitoring_status_tables.value = f"✅ {len(self.export_data_tables)} tabelas encontradas"
                 self.monitoring_status_tables.color = ft.Colors.GREEN
                 self.page.update()
 
@@ -3646,6 +3982,582 @@ class AWSApp:
         except Exception as e:
             self.monitoring_status_tables.value = f"❌ Erro ao exportar: {str(e)}"
             self.monitoring_status_tables.color = ft.Colors.RED
+            self.page.update()
+
+    def create_monitoring_eventbridge_tab(self):
+        # Campo de busca
+        self.eventbridge_filter = ft.TextField(
+            label="Filtrar Regras EventBridge",
+            width=300,
+            value=self.load_filter_text("eventbridge_monitoring"),
+            on_change=self.filter_eventbridge_rules
+        )
+
+        # Botão de atualização manual
+        self.refresh_button_eventbridge = ft.ElevatedButton(
+            "🔄 Atualizar",
+            on_click=self.refresh_eventbridge_rules,
+            width=130,
+            height=40,
+            style=ft.ButtonStyle(
+                shape=ft.RoundedRectangleBorder(radius=8),
+                elevation=3,
+            )
+        )
+
+        # Botões de exportação/copiar
+        self.copy_eventbridge_button = ft.IconButton(
+            icon=ft.Icons.COPY,
+            tooltip="Copiar tabela para clipboard",
+            on_click=self.copy_eventbridge_to_clipboard,
+            icon_size=20,
+            style=ft.ButtonStyle(
+                bgcolor=ft.Colors.BLUE_600,
+                color=ft.Colors.WHITE,
+                shape=ft.RoundedRectangleBorder(radius=8),
+            )
+        )
+
+        self.export_eventbridge_button = ft.IconButton(
+            icon=ft.Icons.FILE_DOWNLOAD,
+            tooltip="Exportar tabela para Excel",
+            on_click=self.export_eventbridge_to_excel,
+            icon_size=20,
+            style=ft.ButtonStyle(
+                bgcolor=ft.Colors.GREEN_600,
+                color=ft.Colors.WHITE,
+                shape=ft.RoundedRectangleBorder(radius=8),
+            )
+        )
+
+        # Progress e status
+        self.monitoring_progress_eventbridge = ft.ProgressRing(visible=False)
+        self.monitoring_status_eventbridge = ft.Text(
+            "Faça login primeiro para visualizar regras EventBridge",
+            size=14,
+            color=ft.Colors.GREY_400
+        )
+
+        # Tabela de EventBridge Rules
+        self.eventbridge_rules_table = ft.DataTable(
+            columns=[
+                ft.DataColumn(ft.Text("Name", weight=ft.FontWeight.BOLD)),
+                ft.DataColumn(ft.Text("State", weight=ft.FontWeight.BOLD)),
+                ft.DataColumn(ft.Text("Description", weight=ft.FontWeight.BOLD)),
+                ft.DataColumn(ft.Text("Schedule", weight=ft.FontWeight.BOLD)),
+                ft.DataColumn(ft.Text("Targets", weight=ft.FontWeight.BOLD)),
+                ft.DataColumn(ft.Text("Actions", weight=ft.FontWeight.BOLD)),
+            ],
+            rows=[],
+            expand=True
+        )
+
+        self.eventbridge_container = ft.Container(
+            content=self.eventbridge_rules_table,
+            expand=True,
+            bgcolor=ft.Colors.GREY_800,
+            border=ft.border.all(1, ft.Colors.GREY_700),
+            border_radius=12,
+            padding=15,
+            shadow=ft.BoxShadow(
+                spread_radius=0,
+                blur_radius=8,
+                color=ft.Colors.BLACK26,
+                offset=ft.Offset(0, 2),
+            )
+        )
+
+        return ft.Container(
+            content=ft.Column([
+                # Container de filtros e botões
+                ft.Container(
+                    content=ft.Row([
+                        self.eventbridge_filter,
+                        ft.Container(width=20),
+                        self.refresh_button_eventbridge,
+                        self.monitoring_progress_eventbridge,
+                        ft.Container(width=15),
+                        self.copy_eventbridge_button,
+                        ft.Container(width=5),
+                        self.export_eventbridge_button
+                    ], alignment=ft.MainAxisAlignment.START),
+                    padding=ft.padding.all(20),
+                    bgcolor=ft.Colors.GREY_800,
+                    border_radius=12,
+                    border=ft.border.all(1, ft.Colors.GREY_700),
+                    shadow=ft.BoxShadow(
+                        spread_radius=0,
+                        blur_radius=8,
+                        color=ft.Colors.BLACK26,
+                        offset=ft.Offset(0, 2),
+                    )
+                ),
+
+                ft.Container(height=15),
+
+                # Status com progress
+                ft.Container(
+                    content=ft.Row([
+                        self.monitoring_status_eventbridge,
+                        ft.Container(expand=True),
+                    ], alignment=ft.MainAxisAlignment.SPACE_BETWEEN),
+                    padding=ft.padding.symmetric(horizontal=20, vertical=12),
+                    bgcolor=ft.Colors.GREY_800,
+                    border_radius=8,
+                    border=ft.border.all(1, ft.Colors.GREY_700),
+                ),
+
+                ft.Container(height=15),
+
+                # Tabela
+                ft.Container(
+                    content=ft.Column([
+                        ft.Text("EventBridge Rules:", size=14, weight=ft.FontWeight.BOLD, color=ft.Colors.WHITE),
+                        ft.Container(height=10),
+                        self.eventbridge_container,
+                    ]),
+                    expand=True
+                ),
+            ],
+            spacing=8,
+            horizontal_alignment=ft.CrossAxisAlignment.STRETCH,
+            scroll=ft.ScrollMode.AUTO
+            ),
+            padding=25,
+            expand=True,
+            bgcolor=ft.Colors.GREY_900
+        )
+
+    # EventBridge Monitoring Functions
+    def fetch_eventbridge_rules(self):
+        """Busca todas as regras do EventBridge usando boto3."""
+        try:
+            if not self.current_account_id:
+                print("❌ Necessário estar logado para buscar regras EventBridge")
+                return []
+
+            print("🔍 Buscando regras do EventBridge...")
+
+            # Usar retry para evitar throttling
+            def get_eventbridge_rules():
+                eventbridge_client = boto3.client('events')
+                paginator = eventbridge_client.get_paginator('list_rules')
+
+                all_rules = []
+                for page in paginator.paginate():
+                    # Pequeno delay entre páginas
+                    time.sleep(0.1)
+                    for rule in page['Rules']:
+                        all_rules.append(rule)
+
+                return all_rules
+
+            rules = self.retry_with_backoff(get_eventbridge_rules, max_retries=3, base_delay=1.0)
+
+            if not rules:
+                print("📋 Nenhuma regra EventBridge encontrada")
+                return []
+
+            print(f"📊 {len(rules)} regras EventBridge encontradas")
+
+            # Processar regras em paralelo para obter detalhes
+            rules_metadata = []
+            max_workers = min(3, max(2, len(rules) // 10))  # Reduzido para evitar throttling
+            print(f"🔧 Usando {max_workers} workers para processar regras")
+
+            start_time = time.time()
+
+            with ThreadPoolExecutor(max_workers=max_workers) as executor:
+                # Submeter jobs com delay para evitar burst
+                future_to_rule = {}
+                for i, rule in enumerate(rules):
+                    # Delay progressivo entre submissões
+                    if i > 0:
+                        time.sleep(0.05)
+
+                    future = executor.submit(self.fetch_single_rule_details, rule)
+                    future_to_rule[future] = rule['Name']
+
+                # Processar resultados
+                completed = 0
+                for future in as_completed(future_to_rule):
+                    try:
+                        rule_data = future.result()
+                        rules_metadata.append(rule_data)
+                        completed += 1
+
+                        # Log de progresso a cada 25%
+                        if completed % max(1, len(rules) // 4) == 0:
+                            progress = (completed / len(rules)) * 100
+                            print(f"📈 Progresso: {completed}/{len(rules)} ({progress:.0f}%)")
+
+                    except Exception as e:
+                        rule_name = future_to_rule[future]
+                        print(f"❌ Erro ao processar regra {rule_name}: {e}")
+                        # Adicionar entrada com erro
+                        rules_metadata.append({
+                            'name': rule_name,
+                            'state': "ERROR",
+                            'description': f"Erro: {str(e)}",
+                            'schedule': "N/A",
+                            'targets': 0
+                        })
+
+            end_time = time.time()
+            duration = end_time - start_time
+            print(f"⚡ Regras EventBridge processadas em {duration:.2f}s com {max_workers} workers")
+
+            return rules_metadata
+
+        except Exception as e:
+            print(f"❌ Erro geral ao buscar regras EventBridge: {e}")
+            return []
+
+    def fetch_single_rule_details(self, rule):
+        """Busca detalhes de uma única regra do EventBridge."""
+        try:
+            # Adicionar delay aleatório pequeno para espalhar requisições
+            time.sleep(random.uniform(0.1, 0.3))
+
+            rule_name = rule['Name']
+
+            # Buscar targets da regra com retry
+            def get_rule_targets():
+                eventbridge_client = boto3.client('events')
+                return eventbridge_client.list_targets_by_rule(Rule=rule_name)
+
+            targets_response = self.retry_with_backoff(get_rule_targets, max_retries=3, base_delay=0.5)
+            target_count = len(targets_response.get('Targets', []))
+
+            return {
+                'name': rule_name,
+                'state': rule.get('State', 'UNKNOWN'),
+                'description': rule.get('Description', 'N/A'),
+                'schedule': rule.get('ScheduleExpression', 'N/A'),
+                'targets': target_count,
+                'arn': rule.get('Arn', 'N/A')
+            }
+
+        except Exception as e:
+            print(f"❌ Erro ao buscar detalhes da regra {rule.get('Name', 'UNKNOWN')}: {e}")
+            return {
+                'name': rule.get('Name', 'UNKNOWN'),
+                'state': "ERROR",
+                'description': f"Erro: {str(e)}",
+                'schedule': "N/A",
+                'targets': 0,
+                'arn': "N/A"
+            }
+
+    def toggle_eventbridge_rule(self, rule_name, current_state):
+        """Liga ou desliga uma regra do EventBridge."""
+        try:
+            eventbridge_client = boto3.client('events')
+
+            if current_state == "ENABLED":
+                # Desabilitar regra
+                def disable_rule():
+                    return eventbridge_client.disable_rule(Name=rule_name)
+
+                self.retry_with_backoff(disable_rule, max_retries=3, base_delay=0.5)
+                new_state = "DISABLED"
+                action = "desabilitada"
+            else:
+                # Habilitar regra
+                def enable_rule():
+                    return eventbridge_client.enable_rule(Name=rule_name)
+
+                self.retry_with_backoff(enable_rule, max_retries=3, base_delay=0.5)
+                new_state = "ENABLED"
+                action = "habilitada"
+
+            print(f"✅ Regra '{rule_name}' {action} com sucesso")
+            return new_state
+
+        except Exception as e:
+            print(f"❌ Erro ao alterar estado da regra {rule_name}: {e}")
+            return current_state  # Retorna estado original em caso de erro
+
+    def update_eventbridge_table(self, rules_data=None):
+        """Atualiza a tabela da aba EventBridge."""
+        if rules_data is None:
+            rules_data = getattr(self, "all_eventbridge_rules", [])
+
+        # Limpa tabela atual
+        self.eventbridge_rules_table.rows.clear()
+
+        for rule in rules_data:
+            # Criar botão interruptor (switch)
+            current_state = rule.get("state", "UNKNOWN")
+            is_enabled = current_state == "ENABLED"
+
+            switch_button = ft.Switch(
+                value=is_enabled,
+                active_color=ft.Colors.GREEN,
+                inactive_color=ft.Colors.RED,
+                on_change=lambda e, rule_name=rule.get("name"): self.on_rule_switch_toggle(e, rule_name)
+            )
+
+            # Definir cor do estado
+            state_color = ft.Colors.GREEN if is_enabled else ft.Colors.RED if current_state == "DISABLED" else ft.Colors.ORANGE
+
+            row = ft.DataRow(
+                cells=[
+                    ft.DataCell(ft.Text(rule.get("name", ""), size=12)),
+                    ft.DataCell(ft.Text(current_state, size=12, color=state_color, weight=ft.FontWeight.BOLD)),
+                    ft.DataCell(ft.Text(rule.get("description", "N/A")[:50] + "..." if len(rule.get("description", "")) > 50 else rule.get("description", "N/A"), size=12)),
+                    ft.DataCell(ft.Text(rule.get("schedule", "N/A"), size=12)),
+                    ft.DataCell(ft.Text(str(rule.get("targets", 0)), size=12)),
+                    ft.DataCell(switch_button),
+                ]
+            )
+            self.eventbridge_rules_table.rows.append(row)
+
+        # Força refresh na UI
+        if hasattr(self, "page"):
+            self.page.update()
+
+    def on_rule_switch_toggle(self, e, rule_name):
+        """Callback para quando o usuário clica no switch de uma regra."""
+        try:
+            # Encontrar a regra atual na lista
+            current_rule = None
+            for rule in getattr(self, "all_eventbridge_rules", []):
+                if rule.get("name") == rule_name:
+                    current_rule = rule
+                    break
+
+            if not current_rule:
+                print(f"❌ Regra {rule_name} não encontrada")
+                return
+
+            current_state = current_rule.get("state", "UNKNOWN")
+
+            # Mostrar status de carregamento
+            self.monitoring_status_eventbridge.value = f"🔄 Alterando estado da regra '{rule_name}'..."
+            self.monitoring_status_eventbridge.color = ft.Colors.ORANGE
+            self.page.update()
+
+            # Executar toggle em thread separada para não bloquear a UI
+            def toggle_in_background():
+                try:
+                    new_state = self.toggle_eventbridge_rule(rule_name, current_state)
+
+                    # Atualizar estado na lista local
+                    current_rule["state"] = new_state
+
+                    def update_ui():
+                        # Atualizar tabela
+                        self.update_eventbridge_table()
+
+                        # Atualizar status
+                        action = "habilitada" if new_state == "ENABLED" else "desabilitada"
+                        self.monitoring_status_eventbridge.value = f"✅ Regra '{rule_name}' {action} com sucesso"
+                        self.monitoring_status_eventbridge.color = ft.Colors.GREEN
+                        self.page.update()
+
+                        # Reset status após 3 segundos
+                        def reset_status():
+                            time.sleep(3)
+                            total_rules = len(getattr(self, "all_eventbridge_rules", []))
+                            self.monitoring_status_eventbridge.value = f"✅ {total_rules} regras EventBridge encontradas"
+                            self.monitoring_status_eventbridge.color = ft.Colors.GREEN
+                            self.page.update()
+
+                        threading.Thread(target=reset_status, daemon=True).start()
+
+                    self.page.run_thread(update_ui)
+
+                except Exception as e:
+                    def update_ui_error():
+                        self.monitoring_status_eventbridge.value = f"❌ Erro ao alterar regra: {str(e)}"
+                        self.monitoring_status_eventbridge.color = ft.Colors.RED
+                        # Reverter o switch
+                        e.control.value = current_state == "ENABLED"
+                        self.page.update()
+
+                    self.page.run_thread(update_ui_error)
+
+            threading.Thread(target=toggle_in_background, daemon=True).start()
+
+        except Exception as e:
+            self.monitoring_status_eventbridge.value = f"❌ Erro: {str(e)}"
+            self.monitoring_status_eventbridge.color = ft.Colors.RED
+            self.page.update()
+
+    def refresh_eventbridge_rules(self, e=None):
+        """Atualiza a lista de regras do EventBridge."""
+        if not self.current_account_id:
+            self.monitoring_status_eventbridge.value = "Faça login primeiro para visualizar regras EventBridge"
+            self.monitoring_status_eventbridge.color = ft.Colors.RED
+            self.page.update()
+            return
+
+        # Ativa progress
+        self.monitoring_progress_eventbridge.visible = True
+        self.refresh_button_eventbridge.disabled = True
+        self.monitoring_status_eventbridge.value = "Carregando regras do EventBridge..."
+        self.monitoring_status_eventbridge.color = ft.Colors.ORANGE
+        self.page.update()
+
+        def fetch_in_background():
+            try:
+                rules = self.fetch_eventbridge_rules()
+
+                def update_ui():
+                    self.all_eventbridge_rules = rules
+                    self.update_eventbridge_table(rules)
+
+                    # Salvar no cache
+                    self.save_eventbridge_cache(rules)
+
+                    self.monitoring_status_eventbridge.value = f"✅ {len(rules)} regras EventBridge encontradas"
+                    self.monitoring_status_eventbridge.color = ft.Colors.GREEN
+                    self.monitoring_progress_eventbridge.visible = False
+                    self.refresh_button_eventbridge.disabled = False
+                    self.page.update()
+
+                # Executa atualização da UI na thread principal
+                self.page.run_thread(update_ui)
+
+            except Exception as e:
+                def update_ui_error():
+                    self.monitoring_status_eventbridge.value = f"❌ Erro ao carregar regras: {str(e)}"
+                    self.monitoring_status_eventbridge.color = ft.Colors.RED
+                    self.monitoring_progress_eventbridge.visible = False
+                    self.refresh_button_eventbridge.disabled = False
+                    self.page.update()
+
+                self.page.run_thread(update_ui_error)
+
+        # Executar em thread separada
+        threading.Thread(target=fetch_in_background, daemon=True).start()
+
+    def filter_eventbridge_rules(self, e=None):
+        """Filtra regras EventBridge baseado no texto de busca."""
+        filter_text = self.eventbridge_filter.value.lower() if self.eventbridge_filter.value else ""
+
+        if not hasattr(self, 'all_eventbridge_rules') or not self.all_eventbridge_rules:
+            return
+
+        if not filter_text:
+            # Se não há filtro, mostra todas as regras
+            self.update_eventbridge_table(self.all_eventbridge_rules)
+        else:
+            # Filtra regras que contenham o texto no nome ou descrição
+            filtered_rules = [
+                rule for rule in self.all_eventbridge_rules
+                if (filter_text in rule.get("name", "").lower() or
+                    filter_text in rule.get("description", "").lower())
+            ]
+            self.update_eventbridge_table(filtered_rules)
+
+        # Salvar texto do filtro
+        self.save_filter_text("eventbridge_monitoring", filter_text)
+
+    def copy_eventbridge_to_clipboard(self, e=None):
+        """Copia dados das regras EventBridge filtradas para clipboard."""
+        try:
+            if not hasattr(self, 'eventbridge_rules_table') or not self.eventbridge_rules_table.rows:
+                return
+
+            # Cabeçalhos
+            headers = ["Name", "State", "Description", "Schedule", "Targets"]
+
+            # Dados das linhas (exceto a coluna Actions)
+            data = []
+            for row in self.eventbridge_rules_table.rows:
+                row_data = []
+                for i, cell in enumerate(row.cells[:-1]):  # Excluir última coluna (Actions)
+                    row_data.append(cell.content.value if hasattr(cell.content, 'value') else str(cell.content))
+                data.append(row_data)
+
+            # Criar texto formatado para clipboard
+            clipboard_text = "\t".join(headers) + "\n"
+            for row_data in data:
+                clipboard_text += "\t".join(row_data) + "\n"
+
+            pyperclip.copy(clipboard_text)
+
+            # Feedback visual
+            self.monitoring_status_eventbridge.value = "✅ Dados copiados para clipboard"
+            self.monitoring_status_eventbridge.color = ft.Colors.GREEN
+            self.page.update()
+
+            # Reset status após 3 segundos
+            def reset_status():
+                time.sleep(3)
+                self.monitoring_status_eventbridge.value = f"✅ {len(data)} regras EventBridge encontradas"
+                self.monitoring_status_eventbridge.color = ft.Colors.GREEN
+                self.page.update()
+
+            threading.Thread(target=reset_status, daemon=True).start()
+
+        except Exception as e:
+            self.monitoring_status_eventbridge.value = f"❌ Erro ao copiar: {str(e)}"
+            self.monitoring_status_eventbridge.color = ft.Colors.RED
+            self.page.update()
+
+    def export_eventbridge_to_excel(self, e=None):
+        """Exporta dados das regras EventBridge filtradas para Excel."""
+        try:
+            if not hasattr(self, 'eventbridge_rules_table') or not self.eventbridge_rules_table.rows:
+                return
+
+            # Mostrar status de escolha de pasta
+            self.monitoring_status_eventbridge.value = "📁 Escolha onde salvar o arquivo..."
+            self.monitoring_status_eventbridge.color = ft.Colors.BLUE
+            self.page.update()
+
+            # Preparar dados (exceto a coluna Actions)
+            self.export_data_eventbridge = []
+            for row in self.eventbridge_rules_table.rows:
+                row_data = []
+                for i, cell in enumerate(row.cells[:-1]):  # Excluir última coluna (Actions)
+                    row_data.append(cell.content.value if hasattr(cell.content, 'value') else str(cell.content))
+                self.export_data_eventbridge.append(row_data)
+
+            # Abrir seletor de pasta e executar export após seleção
+            self.select_export_folder(self._export_eventbridge_after_folder_selection)
+
+        except Exception as e:
+            self.monitoring_status_eventbridge.value = f"❌ Erro ao preparar export: {str(e)}"
+            self.monitoring_status_eventbridge.color = ft.Colors.RED
+            self.page.update()
+
+    def _export_eventbridge_after_folder_selection(self):
+        """Executa o export EventBridge após a pasta ser selecionada"""
+        try:
+            # Criar DataFrame
+            df = pd.DataFrame(self.export_data_eventbridge, columns=["Name", "State", "Description", "Schedule", "Targets"])
+
+            # Nome do arquivo com timestamp
+            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+            filename = f"eventbridge_rules_{timestamp}.xlsx"
+
+            # Caminho completo usando a pasta selecionada
+            file_path = self.export_folder / filename
+
+            # Exportar
+            df.to_excel(file_path, index=False, engine='openpyxl')
+
+            # Feedback visual
+            self.monitoring_status_eventbridge.value = f"✅ Exportado para {file_path.parent.name}/{filename}"
+            self.monitoring_status_eventbridge.color = ft.Colors.GREEN
+            self.page.update()
+
+            # Reset status após 5 segundos
+            def reset_status():
+                time.sleep(5)
+                self.monitoring_status_eventbridge.value = f"✅ {len(self.export_data_eventbridge)} regras EventBridge encontradas"
+                self.monitoring_status_eventbridge.color = ft.Colors.GREEN
+                self.page.update()
+
+            threading.Thread(target=reset_status, daemon=True).start()
+
+        except Exception as e:
+            self.monitoring_status_eventbridge.value = f"❌ Erro ao exportar: {str(e)}"
+            self.monitoring_status_eventbridge.color = ft.Colors.RED
             self.page.update()
 
 

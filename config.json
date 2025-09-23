@@ -53,6 +53,7 @@
   "filters": {
     "glue_monitoring": "job_pagamento",
     "stp_monitoring": "",
-    "table_monitoring": ""
+    "table_monitoring": "",
+    "eventbridge_monitoring": ""
   }
 }
