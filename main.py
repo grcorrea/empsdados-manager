@@ -685,6 +685,7 @@ class AWSApp:
             style=ft.ButtonStyle(
                 shape=ft.RoundedRectangleBorder(radius=10),
                 elevation=4,
+                bgcolor=ft.Colors.BLUE_700
             ),
             tooltip="Fazer login com o perfil AWS selecionado"
         )
