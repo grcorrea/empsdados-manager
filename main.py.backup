@@ -400,15 +400,13 @@ class AWSApp:
             {"name": "Login", "icon": ft.Icons.LOGIN, "id": "Login", "type": "page"},
             {"name": "S3", "icon": ft.Icons.CLOUD, "id": "S3", "type": "page"},
             {"name": "EventBridge", "icon": ft.Icons.EVENT, "id": "EventBridge", "type": "page"},
-            {"name": "Simular Custo", "icon": ft.Icons.CALCULATE, "id": "CostSimulator", "type": "page"},
             {
                 "name": "Report",
                 "icon": ft.Icons.ANALYTICS,
                 "id": "Report",
                 "type": "expandable",
                 "subitems": [
-                    {"name": "Athena", "icon": ft.Icons.QUERY_STATS, "id": "Report Athena"},
-                    {"name": "Glue", "icon": ft.Icons.DASHBOARD, "id": "Report Glue"}
+                    {"name": "Athena", "icon": ft.Icons.QUERY_STATS, "id": "Report Athena"}
                 ]
             },
             {
@@ -556,7 +554,7 @@ class AWSApp:
             # Se selecionando um sub-item de Monitoring ou Report, garantir que o menu está expandido
             if section_id in ["Monitoring Glue", "Monitoring STF", "Monitoring Tables"]:
                 self.expanded_menus["Monitoring"] = True
-            elif section_id in ["Report Athena", "Report Glue"]:
+            elif section_id in ["Report Athena"]:
                 self.expanded_menus["Report"] = True
 
             # Recriar sidebar com nova seleção
@@ -590,12 +588,6 @@ class AWSApp:
                     self.check_and_load_cache_on_tab_open("eventbridge")
                 threading.Thread(target=load_cache, daemon=True).start()
 
-            elif section_id == "CostSimulator":
-                def auto_update():
-                    time.sleep(0.2)  # Pequena pausa para garantir que a UI foi carregada
-                    self.auto_update_simulator_data()
-                threading.Thread(target=auto_update, daemon=True).start()
-
     def update_sidebar(self):
         """Atualiza o sidebar com nova seleção"""
         self.sidebar_container.content = self.create_sidebar().content
@@ -615,12 +607,8 @@ class AWSApp:
             content = self.monitoring_tables_tab
         elif self.current_section == "EventBridge":
             content = self.monitoring_eventbridge_tab
-        elif self.current_section == "CostSimulator":
-            content = self.cost_simulator_tab
         elif self.current_section == "Report Athena":
             content = self.report_athena_tab
-        elif self.current_section == "Report Glue":
-            content = self.report_glue_tab
         else:
             content = self.login_tab
 
@@ -636,8 +624,6 @@ class AWSApp:
         self.monitoring_tables_tab = self.create_monitoring_tables_tab()
         self.monitoring_eventbridge_tab = self.create_monitoring_eventbridge_tab()
         self.report_athena_tab = self.create_report_athena_tab()
-        self.report_glue_tab = self.create_report_glue_tab()
-        self.cost_simulator_tab = self.create_cost_simulator_tab()
 
         # Criar sidebar
         self.sidebar_container = self.create_sidebar()
@@ -2485,6 +2471,10 @@ class AWSApp:
                 cache_file = self.get_stpf_cache_filename()
             elif cache_type == "tables":
                 cache_file = self.get_tables_cache_filename()
+            elif cache_type == "athena_workgroups":
+                cache_file = self.get_athena_workgroups_cache_filename()
+            elif cache_type == "athena_costs":
+                cache_file = self.get_athena_costs_cache_filename()
             else:
                 return False
 
@@ -2810,6 +2800,141 @@ class AWSApp:
             print(f"❌ Erro ao carregar cache EventBridge: {e}")
             return None
 
+    # ============== FUNÇÕES DE CACHE ATHENA ==============
+
+    def get_athena_workgroups_cache_filename(self):
+        """Retorna o nome do arquivo de cache dos workgroups Athena para a conta atual"""
+        if not self.current_account_id:
+            return self.cache_dir / "athena_workgroups_cache.json"  # Fallback para casos sem account_id
+        return self.cache_dir / f"athena_workgroups_cache_{self.current_account_id}.json"
+
+    def get_athena_costs_cache_filename(self):
+        """Retorna o nome do arquivo de cache dos custos Athena para a conta atual"""
+        if not self.current_account_id:
+            return self.cache_dir / "athena_costs_cache.json"  # Fallback para casos sem account_id
+        return self.cache_dir / f"athena_costs_cache_{self.current_account_id}.json"
+
+    def save_athena_workgroups_cache(self, workgroups_data):
+        """Salva dados dos workgroups Athena no cache local"""
+        try:
+            if not self.ensure_cache_directory():
+                return False
+
+            current_time = datetime.now(timezone.utc).isoformat()
+            cache_data = {
+                "timestamp": current_time,
+                "updated_at": current_time,
+                "account_id": self.current_account_id,
+                "profile": self.current_profile,
+                "workgroups_count": len(workgroups_data),
+                "workgroups": workgroups_data  # Workgroups data is already JSON serializable
+            }
+
+            cache_file = self.get_athena_workgroups_cache_filename()
+
+            with open(cache_file, 'w', encoding='utf-8') as f:
+                json.dump(cache_data, f, indent=2, ensure_ascii=False)
+
+            print(f"💾 Cache workgroups Athena salvo: {len(workgroups_data)} workgroups")
+            return True
+
+        except Exception as e:
+            print(f"❌ Erro ao salvar cache workgroups Athena: {e}")
+            return False
+
+    def load_athena_workgroups_cache(self):
+        """Carrega dados dos workgroups Athena do cache local"""
+        try:
+            cache_file = self.get_athena_workgroups_cache_filename()
+            if not cache_file.exists():
+                return None
+
+            with open(cache_file, 'r', encoding='utf-8') as f:
+                cache_data = json.load(f)
+
+            # Verificar se o cache é para a conta/profile atual
+            if (cache_data.get("account_id") != self.current_account_id or
+                cache_data.get("profile") != self.current_profile):
+                print("🔄 Cache workgroups Athena é de outra conta/profile, ignorando...")
+                return None
+
+            workgroups_list = cache_data.get("workgroups", [])
+            cache_timestamp = cache_data.get("timestamp", "")
+            print(f"📁 Cache workgroups Athena carregado: {len(workgroups_list)} workgroups (salvo em {cache_timestamp})")
+            return workgroups_list
+
+        except Exception as e:
+            print(f"❌ Erro ao carregar cache workgroups Athena: {e}")
+            return None
+
+    def save_athena_costs_cache(self, costs_data, period, workgroup, start_date, end_date):
+        """Salva dados de custos Athena no cache local"""
+        try:
+            if not self.ensure_cache_directory():
+                return False
+
+            current_time = datetime.now(timezone.utc).isoformat()
+            cache_data = {
+                "timestamp": current_time,
+                "updated_at": current_time,
+                "account_id": self.current_account_id,
+                "profile": self.current_profile,
+                "costs_count": len(costs_data),
+                "query_params": {
+                    "period": period,
+                    "workgroup": workgroup,
+                    "start_date": start_date,
+                    "end_date": end_date
+                },
+                "costs": costs_data  # Costs data is already JSON serializable
+            }
+
+            cache_file = self.get_athena_costs_cache_filename()
+
+            with open(cache_file, 'w', encoding='utf-8') as f:
+                json.dump(cache_data, f, indent=2, ensure_ascii=False)
+
+            print(f"💾 Cache custos Athena salvo: {len(costs_data)} registros")
+            return True
+
+        except Exception as e:
+            print(f"❌ Erro ao salvar cache custos Athena: {e}")
+            return False
+
+    def load_athena_costs_cache(self, period, workgroup, start_date, end_date):
+        """Carrega dados de custos Athena do cache local se os parâmetros coincidirem"""
+        try:
+            cache_file = self.get_athena_costs_cache_filename()
+            if not cache_file.exists():
+                return None
+
+            with open(cache_file, 'r', encoding='utf-8') as f:
+                cache_data = json.load(f)
+
+            # Verificar se o cache é para a conta/profile atual
+            if (cache_data.get("account_id") != self.current_account_id or
+                cache_data.get("profile") != self.current_profile):
+                print("🔄 Cache custos Athena é de outra conta/profile, ignorando...")
+                return None
+
+            # Verificar se os parâmetros da consulta coincidem
+            cached_params = cache_data.get("query_params", {})
+            if (cached_params.get("period") != period or
+                cached_params.get("workgroup") != workgroup or
+                cached_params.get("start_date") != start_date or
+                cached_params.get("end_date") != end_date):
+                print("🔄 Cache custos Athena tem parâmetros diferentes, ignorando...")
+                return None
+
+            costs_list = cache_data.get("costs", [])
+            cache_timestamp = cache_data.get("timestamp", "")
+            print(f"📁 Cache custos Athena carregado: {len(costs_list)} registros (salvo em {cache_timestamp})")
+            return costs_list
+
+        except Exception as e:
+            print(f"❌ Erro ao carregar cache custos Athena: {e}")
+            return None
+
     def check_and_load_cache_on_tab_open(self, tab_type):
         """Verifica cache ao abrir aba e carrega conforme regras de atualização automática"""
         if not self.current_account_id:
@@ -2891,7 +3016,7 @@ class AWSApp:
             else:
                 # Não tem cache, carregar dados automaticamente
                 print("🔄 Cache EventBridge não encontrado, carregando dados...")
-                self.refresh_eventbridge_rules()
+                self.refresh_eventbridge_rules()\n\n        elif tab_type == \"athena\":\n            # Tentar carregar cache dos workgroups Athena\n            cached_workgroups = self.load_athena_workgroups_cache()\n            if cached_workgroups:\n                # Cache encontrado - carregar workgroups no dropdown\n                try:\n                    # Limpar opções existentes\n                    self.athena_workgroup_dropdown.options.clear()\n                    self.athena_workgroup_dropdown.options.append(\n                        ft.dropdown.Option(\"all\", \"Todos os Workgroups\")\n                    )\n\n                    # Adicionar workgroups do cache\n                    for wg in cached_workgroups:\n                        self.athena_workgroup_dropdown.options.append(\n                            ft.dropdown.Option(wg['Name'], wg['Name'])\n                        )\n\n                    self.athena_status.value = f\"📁 {len(cached_workgroups)} workgroups carregados do cache\"\n                    self.athena_status.color = ft.Colors.BLUE\n                    self.page.update()\n                    print(\"📁 Cache workgroups Athena carregado - Use o botão Carregar Workgroups para atualizar\")\n                except Exception as e:\n                    print(f\"❌ Erro ao aplicar cache workgroups: {e}\")\n            else:\n                print(\"📦 Cache workgroups Athena não encontrado\")
 
     def copy_jobs_to_clipboard(self, e):
         """Copia a tabela filtrada de jobs Glue para o clipboard"""
@@ -3556,12 +3681,16 @@ class AWSApp:
             print(f"⚠️  Erro ao buscar data dos arquivos S3 em {s3_location}: {e}")
             return None
 
-    def fetch_all_tables(self, databases=["itau", "teste"], max_workers=3):
+    def fetch_all_tables(self, databases=None, max_workers=3):
         """Busca tabelas dos databases especificados usando boto3 e threads otimizadas."""
         try:
             if not self.current_account_id:
                 print("❌ Necessário estar logado para buscar tabelas")
                 return []
+
+            # Se databases não foi fornecido, ler do config
+            if databases is None:
+                databases = self.config.get("glue", {}).get("databases", ["itau", "teste"])
 
             print(f"🔍 Buscando tabelas nos databases: {databases}")
             all_table_names = []
@@ -3709,7 +3838,7 @@ class AWSApp:
 
         def fetch_in_background():
             try:
-                tables = self.fetch_all_tables(databases=["itau", "teste"])
+                tables = self.fetch_all_tables()
 
                 def update_ui():
                     self.all_tables = tables
@@ -4731,881 +4860,6 @@ POR WORKGROUP:
                 color=ft.Colors.RED
             )
             self.page.update()
-
-    def create_report_glue_tab(self):
-        """Cria a aba de relatórios de custos do Glue"""
-
-        # Filtro de período
-        self.glue_period_dropdown = ft.Dropdown(
-            label="Período",
-            width=150,
-            options=[
-                ft.dropdown.Option("daily", "Diário"),
-                ft.dropdown.Option("weekly", "Semanal"),
-                ft.dropdown.Option("monthly", "Mensal"),
-                ft.dropdown.Option("annual", "Anual")
-            ],
-            value="monthly",
-            on_change=self.on_glue_period_change
-        )
-
-        # Filtro de tipo de job
-        self.glue_job_type_dropdown = ft.Dropdown(
-            label="Tipo de Job",
-            width=200,
-            options=[
-                ft.dropdown.Option("all", "Todos os Jobs"),
-                ft.dropdown.Option("ETL", "ETL Jobs"),
-                ft.dropdown.Option("STREAMING", "Streaming Jobs"),
-                ft.dropdown.Option("PYTHON_SHELL", "Python Shell")
-            ],
-            value="all",
-            on_change=self.on_glue_job_type_change
-        )
-
-        # Seletor de data de início
-        self.glue_start_date = ft.TextField(
-            label="Data Início (YYYY-MM-DD)",
-            width=180,
-            value="2024-01-01"
-        )
-
-        # Seletor de data de fim
-        self.glue_end_date = ft.TextField(
-            label="Data Fim (YYYY-MM-DD)",
-            width=180,
-            value="2024-12-31"
-        )
-
-        # Botão de atualização
-        self.refresh_button_glue = ft.ElevatedButton(
-            "📊 Gerar Relatório",
-            on_click=self.refresh_glue_costs,
-            width=150,
-            height=40,
-            style=ft.ButtonStyle(
-                shape=ft.RoundedRectangleBorder(radius=8),
-                elevation=3,
-            )
-        )
-
-        # Botão para carregar jobs
-        self.load_glue_jobs_button = ft.ElevatedButton(
-            "🔄 Carregar Jobs",
-            on_click=self.load_glue_jobs,
-            width=160,
-            height=40,
-            style=ft.ButtonStyle(
-                shape=ft.RoundedRectangleBorder(radius=8),
-                elevation=3,
-            )
-        )
-
-        # Progress e status
-        self.glue_progress = ft.ProgressRing(visible=False)
-        self.glue_status = ft.Text(
-            "Faça login primeiro para visualizar relatórios de custos",
-            size=14,
-            color=ft.Colors.GREY_400
-        )
-
-        # Container para gráficos
-        self.glue_charts_container = ft.Container(
-            content=ft.Text(
-                "Selecione o período e clique em 'Gerar Relatório' para visualizar os custos",
-                size=16,
-                text_align=ft.TextAlign.CENTER,
-                color=ft.Colors.GREY_500
-            ),
-            height=400,
-            expand=True,
-            bgcolor=ft.Colors.GREY_800,
-            border=ft.border.all(1, ft.Colors.GREY_700),
-            border_radius=12,
-            padding=20,
-            alignment=ft.alignment.center
-        )
-
-        # Tabela de custos detalhados
-        self.glue_costs_table = ft.DataTable(
-            columns=[
-                ft.DataColumn(ft.Text("Job Name", weight=ft.FontWeight.BOLD)),
-                ft.DataColumn(ft.Text("Tipo", weight=ft.FontWeight.BOLD)),
-                ft.DataColumn(ft.Text("Custo (USD)", weight=ft.FontWeight.BOLD)),
-                ft.DataColumn(ft.Text("Execuções", weight=ft.FontWeight.BOLD)),
-                ft.DataColumn(ft.Text("DPU Hours", weight=ft.FontWeight.BOLD)),
-            ],
-            rows=[],
-            expand=True
-        )
-
-        self.glue_table_container = ft.Container(
-            content=self.glue_costs_table,
-            expand=True,
-            bgcolor=ft.Colors.GREY_800,
-            border=ft.border.all(1, ft.Colors.GREY_700),
-            border_radius=12,
-            padding=15,
-            shadow=ft.BoxShadow(
-                spread_radius=0,
-                blur_radius=8,
-                color=ft.Colors.BLACK26,
-                offset=ft.Offset(0, 2),
-            )
-        )
-
-        return ft.Container(
-            content=ft.Column([
-                # Container de filtros e botões
-                ft.Container(
-                    content=ft.Column([
-                        ft.Row([
-                            self.glue_period_dropdown,
-                            ft.Container(width=15),
-                            self.glue_job_type_dropdown,
-                            ft.Container(width=15),
-                            self.glue_start_date,
-                            ft.Container(width=15),
-                            self.glue_end_date,
-                        ], alignment=ft.MainAxisAlignment.START),
-
-                        ft.Container(height=15),
-
-                        ft.Row([
-                            self.load_glue_jobs_button,
-                            ft.Container(width=15),
-                            self.refresh_button_glue,
-                            self.glue_progress,
-                        ], alignment=ft.MainAxisAlignment.START),
-                    ]),
-                    padding=ft.padding.all(20),
-                    bgcolor=ft.Colors.GREY_800,
-                    border_radius=12,
-                    border=ft.border.all(1, ft.Colors.GREY_700),
-                    shadow=ft.BoxShadow(
-                        spread_radius=0,
-                        blur_radius=8,
-                        color=ft.Colors.BLACK26,
-                        offset=ft.Offset(0, 2),
-                    )
-                ),
-
-                ft.Container(height=15),
-
-                # Status com progress
-                ft.Container(
-                    content=ft.Row([
-                        self.glue_status,
-                        ft.Container(expand=True),
-                    ], alignment=ft.MainAxisAlignment.SPACE_BETWEEN),
-                    padding=ft.padding.symmetric(horizontal=20, vertical=12),
-                    bgcolor=ft.Colors.GREY_800,
-                    border_radius=8,
-                    border=ft.border.all(1, ft.Colors.GREY_700),
-                ),
-
-                ft.Container(height=15),
-
-                # Gráficos
-                ft.Container(
-                    content=ft.Column([
-                        ft.Text("Relatório de Custos Glue:", size=14, weight=ft.FontWeight.BOLD, color=ft.Colors.WHITE),
-                        ft.Container(height=10),
-                        self.glue_charts_container,
-                    ]),
-                    expand=True
-                ),
-
-                ft.Container(height=15),
-
-                # Tabela detalhada
-                ft.Container(
-                    content=ft.Column([
-                        ft.Text("Detalhamento por Job:", size=14, weight=ft.FontWeight.BOLD, color=ft.Colors.WHITE),
-                        ft.Container(height=10),
-                        self.glue_table_container,
-                    ]),
-                    height=300
-                ),
-            ],
-            spacing=8,
-            horizontal_alignment=ft.CrossAxisAlignment.STRETCH,
-            scroll=ft.ScrollMode.AUTO
-            ),
-            padding=25,
-            expand=True,
-            bgcolor=ft.Colors.GREY_900
-        )
-
-    # Report Glue Functions
-    def on_glue_period_change(self, e):
-        """Callback para mudança de período"""
-        print(f"Período selecionado: {self.glue_period_dropdown.value}")
-
-    def on_glue_job_type_change(self, e):
-        """Callback para mudança de tipo de job"""
-        print(f"Tipo de job selecionado: {self.glue_job_type_dropdown.value}")
-
-    def load_glue_jobs(self, e):
-        """Carrega lista de jobs do Glue"""
-        try:
-            self.glue_status.value = "🔄 Carregando jobs do Glue..."
-            self.glue_status.color = ft.Colors.ORANGE
-            self.glue_progress.visible = True
-            self.page.update()
-
-            def load_in_background():
-                try:
-                    if not self.current_account_id:
-                        self.glue_status.value = "❌ Necessário estar logado para carregar jobs"
-                        self.glue_status.color = ft.Colors.RED
-                        return
-
-                    glue_client = boto3.client('glue')
-                    response = glue_client.get_jobs()
-                    jobs = response.get('Jobs', [])
-
-                    # Atualizar dropdown com jobs encontrados
-                    job_options = [ft.dropdown.Option("all", "Todos os Jobs")]
-                    for job in jobs:
-                        job_name = job.get('Name', 'Unknown')
-                        job_options.append(ft.dropdown.Option(job_name, job_name))
-
-                    self.glue_job_type_dropdown.options = job_options
-
-                    self.glue_status.value = f"✅ {len(jobs)} jobs carregados com sucesso"
-                    self.glue_status.color = ft.Colors.GREEN
-
-                except Exception as e:
-                    print(f"❌ Erro ao carregar jobs: {e}")
-                    self.glue_status.value = f"❌ Erro ao carregar jobs: {str(e)}"
-                    self.glue_status.color = ft.Colors.RED
-
-                finally:
-                    self.glue_progress.visible = False
-                    self.page.update()
-
-            threading.Thread(target=load_in_background, daemon=True).start()
-
-        except Exception as e:
-            print(f"❌ Erro ao iniciar carregamento: {e}")
-            self.glue_status.value = f"❌ Erro: {str(e)}"
-            self.glue_status.color = ft.Colors.RED
-            self.glue_progress.visible = False
-            self.page.update()
-
-    def refresh_glue_costs(self, e):
-        """Gera relatório de custos do Glue"""
-        try:
-            self.glue_status.value = "📊 Gerando relatório de custos..."
-            self.glue_status.color = ft.Colors.ORANGE
-            self.glue_progress.visible = True
-            self.page.update()
-
-            def generate_in_background():
-                try:
-                    # Placeholder para implementação futura
-                    self.glue_status.value = "🚧 Funcionalidade em desenvolvimento"
-                    self.glue_status.color = ft.Colors.ORANGE
-
-                    # Exemplo de dados mockados para demonstração
-                    self.glue_charts_container.content = ft.Text(
-                        "📊 Relatório de Custos Glue\n\n" +
-                        "🚧 Esta funcionalidade está em desenvolvimento.\n" +
-                        "Em breve você poderá visualizar:\n\n" +
-                        "• Custos por job\n" +
-                        "• Uso de DPU hours\n" +
-                        "• Histórico de execuções\n" +
-                        "• Comparativos por período",
-                        size=14,
-                        text_align=ft.TextAlign.LEFT,
-                        color=ft.Colors.WHITE
-                    )
-
-                except Exception as e:
-                    print(f"❌ Erro ao gerar relatório: {e}")
-                    self.glue_status.value = f"❌ Erro: {str(e)}"
-                    self.glue_status.color = ft.Colors.RED
-
-                finally:
-                    self.glue_progress.visible = False
-                    self.page.update()
-
-            threading.Thread(target=generate_in_background, daemon=True).start()
-
-        except Exception as e:
-            print(f"❌ Erro ao iniciar geração: {e}")
-            self.glue_status.value = f"❌ Erro: {str(e)}"
-            self.glue_status.color = ft.Colors.RED
-            self.glue_progress.visible = False
-            self.page.update()
-
-    def create_cost_simulator_tab(self):
-        """Cria a aba de simulação de custos AWS para sa-east-1"""
-
-        # ============ ATHENA CALCULATOR ============
-
-        # Input de dados escaneados (TB)
-        self.athena_data_scanned = ft.TextField(
-            label="Dados Escaneados (TB)",
-            width=200,
-            value="1.0",
-            suffix_text="TB",
-            keyboard_type=ft.KeyboardType.NUMBER
-        )
-
-        # Botão calcular Athena
-        self.calc_athena_button = ft.ElevatedButton(
-            "💰 Calcular Athena",
-            on_click=self.calculate_athena_cost,
-            width=150,
-            height=40,
-            style=ft.ButtonStyle(
-                shape=ft.RoundedRectangleBorder(radius=8),
-                elevation=3,
-                bgcolor=ft.Colors.BLUE_700
-            )
-        )
-
-        # Resultado Athena
-        self.athena_cost_result = ft.Text(
-            "Insira os dados e clique em calcular",
-            size=14,
-            color=ft.Colors.GREY_400
-        )
-
-        # ============ GLUE CALCULATOR ============
-
-        # Tipo de máquina Glue
-        self.glue_machine_type = ft.Dropdown(
-            label="Tipo de Máquina",
-            width=200,
-            options=[
-                ft.dropdown.Option("G.025X", "G.025X (0.25 DPU)"),
-                ft.dropdown.Option("G.1X", "G.1X (1 DPU)"),
-                ft.dropdown.Option("G.2X", "G.2X (2 DPU)"),
-                ft.dropdown.Option("Standard", "Standard (1 DPU)")
-            ],
-            value="G.1X"
-        )
-
-        # Quantidade de DPUs
-        self.glue_dpu_count = ft.TextField(
-            label="Quantidade DPUs",
-            width=150,
-            value="2",
-            suffix_text="DPU",
-            keyboard_type=ft.KeyboardType.NUMBER
-        )
-
-        # Tempo de execução (minutos)
-        self.glue_execution_time = ft.TextField(
-            label="Tempo Execução",
-            width=150,
-            value="30",
-            suffix_text="min",
-            keyboard_type=ft.KeyboardType.NUMBER
-        )
-
-        # Botão calcular Glue
-        self.calc_glue_button = ft.ElevatedButton(
-            "💰 Calcular Glue",
-            on_click=self.calculate_glue_cost,
-            width=150,
-            height=40,
-            style=ft.ButtonStyle(
-                shape=ft.RoundedRectangleBorder(radius=8),
-                elevation=3,
-                bgcolor=ft.Colors.GREEN_700
-            )
-        )
-
-        # Resultado Glue
-        self.glue_cost_result = ft.Text(
-            "Insira os dados e clique em calcular",
-            size=14,
-            color=ft.Colors.GREY_400
-        )
-
-        # ============ CURRENCY & COMPARISON ============
-
-        # Status da cotação (atualização automática)
-        self.currency_status = ft.Text(
-            "Carregando cotação USD/BRL...",
-            size=13,
-            color=ft.Colors.ORANGE,
-            weight=ft.FontWeight.W_500
-        )
-
-        # Status de preços AWS (atualização automática)
-        self.aws_pricing_status = ft.Text(
-            "Carregando preços AWS...",
-            size=13,
-            color=ft.Colors.ORANGE,
-            weight=ft.FontWeight.W_500
-        )
-
-        # Área de comparação melhorada
-        self.comparison_result = ft.Container(
-            content=ft.Text(
-                "📊 Comparação de Custos\n\nCalcule os custos do Athena e Glue para ver a comparação detalhada aqui.",
-                size=15,
-                text_align=ft.TextAlign.CENTER,
-                color=ft.Colors.GREY_400,
-                weight=ft.FontWeight.W_500
-            ),
-            height=220,
-            expand=True,
-            bgcolor=ft.Colors.GREY_800,
-            border=ft.border.all(2, ft.Colors.GREY_600),
-            border_radius=15,
-            padding=25,
-            alignment=ft.alignment.center,
-            shadow=ft.BoxShadow(
-                spread_radius=0,
-                blur_radius=10,
-                color=ft.Colors.BLACK26,
-                offset=ft.Offset(0, 3),
-            )
-        )
-
-        # Progress indicator unificado
-        self.simulator_progress = ft.ProgressRing(visible=False, width=30, height=30)
-
-        # Variáveis internas para cálculos
-        self.usd_to_brl_rate = 5.20  # Taxa padrão
-        self.athena_last_cost_usd = 0
-        self.glue_last_cost_usd = 0
-
-        # Preços AWS sa-east-1 (podem ser atualizados via AI)
-        self.aws_pricing = {
-            "athena_per_tb": 5.00,  # USD por TB escaneado
-            "glue_pricing": {
-                "G.025X": 0.11,  # USD por DPU-hora
-                "G.1X": 0.44,    # USD por DPU-hora
-                "G.2X": 0.88,    # USD por DPU-hora
-                "Standard": 0.44  # USD por DPU-hora
-            }
-        }
-
-        return ft.Container(
-            content=ft.Column([
-                # Cabeçalho principal melhorado
-                ft.Container(
-                    content=ft.Column([
-                        ft.Text(
-                            "💰 Simulador de Custos AWS",
-                            size=24,
-                            weight=ft.FontWeight.BOLD,
-                            color=ft.Colors.WHITE,
-                            text_align=ft.TextAlign.CENTER
-                        ),
-                        ft.Text(
-                            "Região SA-East-1 (São Paulo) • Cotação e Preços Atualizados Automaticamente",
-                            size=14,
-                            color=ft.Colors.BLUE_200,
-                            text_align=ft.TextAlign.CENTER,
-                            italic=True
-                        ),
-                    ], horizontal_alignment=ft.CrossAxisAlignment.CENTER, spacing=8),
-                    padding=ft.padding.all(25),
-                    bgcolor=ft.Colors.BLUE_800,
-                    border_radius=15,
-                    border=ft.border.all(2, ft.Colors.BLUE_600),
-                    shadow=ft.BoxShadow(
-                        spread_radius=0,
-                        blur_radius=15,
-                        color=ft.Colors.BLACK26,
-                        offset=ft.Offset(0, 5),
-                    )
-                ),
-
-                ft.Container(height=25),
-
-                # Status de atualizações
-                ft.Container(
-                    content=ft.Row([
-                        ft.Icon(ft.Icons.CURRENCY_EXCHANGE, color=ft.Colors.GREEN, size=20),
-                        self.currency_status,
-                        ft.Container(expand=True),
-                        ft.Icon(ft.Icons.CLOUD, color=ft.Colors.PURPLE, size=20),
-                        self.aws_pricing_status,
-                        ft.Container(width=10),
-                        self.simulator_progress,
-                    ], alignment=ft.MainAxisAlignment.SPACE_BETWEEN),
-                    padding=ft.padding.all(15),
-                    bgcolor=ft.Colors.GREY_800,
-                    border_radius=10,
-                    border=ft.border.all(1, ft.Colors.GREY_600),
-                ),
-
-                ft.Container(height=25),
-
-                # Calculadoras lado a lado com design melhorado
-                ft.Row([
-                    # ============ ATHENA CALCULATOR ============
-                    ft.Container(
-                        content=ft.Column([
-                            # Cabeçalho Athena
-                            ft.Container(
-                                content=ft.Row([
-                                    ft.Icon(ft.Icons.SEARCH, color=ft.Colors.BLUE, size=24),
-                                    ft.Text(
-                                        "Amazon Athena",
-                                        size=18,
-                                        weight=ft.FontWeight.BOLD,
-                                        color=ft.Colors.WHITE
-                                    )
-                                ], spacing=10),
-                                padding=ft.padding.only(bottom=20)
-                            ),
-
-                            # Inputs Athena
-                            ft.Column([
-                                ft.Text("Volume de Dados Escaneados:",
-                                        size=13,
-                                        color=ft.Colors.BLUE_200,
-                                        weight=ft.FontWeight.W_500),
-                                ft.Container(height=8),
-                                self.athena_data_scanned,
-                                ft.Container(height=20),
-                                self.calc_athena_button,
-                            ], horizontal_alignment=ft.CrossAxisAlignment.START),
-
-                            ft.Container(height=25),
-
-                            # Resultado Athena
-                            ft.Container(
-                                content=ft.Column([
-                                    ft.Text("💳 Resultado do Cálculo:",
-                                            size=14,
-                                            weight=ft.FontWeight.BOLD,
-                                            color=ft.Colors.WHITE),
-                                    ft.Container(height=10),
-                                    self.athena_cost_result,
-                                ]),
-                                padding=ft.padding.all(15),
-                                bgcolor=ft.Colors.GREY_700,
-                                border_radius=10,
-                                border=ft.border.all(1, ft.Colors.BLUE_600),
-                                expand=True
-                            ),
-                        ]),
-                        expand=1,
-                        padding=ft.padding.all(25),
-                        bgcolor=ft.Colors.GREY_800,
-                        border_radius=15,
-                        border=ft.border.all(2, ft.Colors.BLUE_700),
-                        shadow=ft.BoxShadow(
-                            spread_radius=0,
-                            blur_radius=10,
-                            color=ft.Colors.BLACK26,
-                            offset=ft.Offset(0, 3),
-                        )
-                    ),
-
-                    ft.Container(width=25),
-
-                    # ============ GLUE CALCULATOR ============
-                    ft.Container(
-                        content=ft.Column([
-                            # Cabeçalho Glue
-                            ft.Container(
-                                content=ft.Row([
-                                    ft.Icon(ft.Icons.SETTINGS, color=ft.Colors.GREEN, size=24),
-                                    ft.Text(
-                                        "AWS Glue",
-                                        size=18,
-                                        weight=ft.FontWeight.BOLD,
-                                        color=ft.Colors.WHITE
-                                    )
-                                ], spacing=10),
-                                padding=ft.padding.only(bottom=20)
-                            ),
-
-                            # Inputs Glue organizados
-                            ft.Column([
-                                ft.Row([
-                                    ft.Column([
-                                        ft.Text("Tipo de Máquina:",
-                                                size=13,
-                                                color=ft.Colors.GREEN_200,
-                                                weight=ft.FontWeight.W_500),
-                                        ft.Container(height=8),
-                                        self.glue_machine_type,
-                                    ], expand=1),
-                                    ft.Container(width=15),
-                                    ft.Column([
-                                        ft.Text("Quantidade DPUs:",
-                                                size=13,
-                                                color=ft.Colors.GREEN_200,
-                                                weight=ft.FontWeight.W_500),
-                                        ft.Container(height=8),
-                                        self.glue_dpu_count,
-                                    ], expand=1),
-                                ]),
-
-                                ft.Container(height=15),
-
-                                ft.Text("Tempo de Execução:",
-                                        size=13,
-                                        color=ft.Colors.GREEN_200,
-                                        weight=ft.FontWeight.W_500),
-                                ft.Container(height=8),
-                                self.glue_execution_time,
-
-                                ft.Container(height=20),
-                                self.calc_glue_button,
-                            ], horizontal_alignment=ft.CrossAxisAlignment.START),
-
-                            ft.Container(height=25),
-
-                            # Resultado Glue
-                            ft.Container(
-                                content=ft.Column([
-                                    ft.Text("💳 Resultado do Cálculo:",
-                                            size=14,
-                                            weight=ft.FontWeight.BOLD,
-                                            color=ft.Colors.WHITE),
-                                    ft.Container(height=10),
-                                    self.glue_cost_result,
-                                ]),
-                                padding=ft.padding.all(15),
-                                bgcolor=ft.Colors.GREY_700,
-                                border_radius=10,
-                                border=ft.border.all(1, ft.Colors.GREEN_600),
-                                expand=True
-                            ),
-                        ]),
-                        expand=1,
-                        padding=ft.padding.all(25),
-                        bgcolor=ft.Colors.GREY_800,
-                        border_radius=15,
-                        border=ft.border.all(2, ft.Colors.GREEN_700),
-                        shadow=ft.BoxShadow(
-                            spread_radius=0,
-                            blur_radius=10,
-                            color=ft.Colors.BLACK26,
-                            offset=ft.Offset(0, 3),
-                        )
-                    ),
-                ], alignment=ft.MainAxisAlignment.SPACE_BETWEEN),
-
-                ft.Container(height=30),
-
-                # Seção de comparação melhorada
-                ft.Container(
-                    content=ft.Column([
-                        ft.Row([
-                            ft.Icon(ft.Icons.ANALYTICS, color=ft.Colors.ORANGE, size=28),
-                            ft.Text(
-                                "Análise Comparativa de Custos",
-                                size=18,
-                                weight=ft.FontWeight.BOLD,
-                                color=ft.Colors.WHITE
-                            )
-                        ], spacing=12, alignment=ft.MainAxisAlignment.CENTER),
-                        ft.Container(height=15),
-                        self.comparison_result,
-                    ]),
-                    expand=True
-                ),
-            ],
-            spacing=0,
-            horizontal_alignment=ft.CrossAxisAlignment.STRETCH,
-            scroll=ft.ScrollMode.AUTO
-            ),
-            padding=30,
-            expand=True,
-            bgcolor=ft.Colors.GREY_900
-        )
-
-    # Cost Simulator Functions
-    def auto_update_simulator_data(self):
-        """Atualiza automaticamente cotação e preços AWS ao abrir a aba"""
-        try:
-            print("🔄 Iniciando atualizações automáticas do simulador...")
-
-            def update_all_data():
-                try:
-                    # Mostrar que está carregando
-                    self.simulator_progress.visible = True
-                    self.currency_status.value = "🔄 Atualizando cotação..."
-                    self.aws_pricing_status.value = "🔄 Atualizando preços AWS..."
-                    self.page.update()
-
-                    # Atualizar cotação USD/BRL
-                    try:
-                        import requests
-                        response = requests.get("https://api.awesomeapi.com.br/json/last/USD-BRL", timeout=8)
-                        data = response.json()
-                        new_rate = float(data["USDBRL"]["bid"])
-                        self.usd_to_brl_rate = new_rate
-
-                        self.currency_status.value = f"✅ USD/BRL: R$ {new_rate:.3f}"
-                        self.currency_status.color = ft.Colors.GREEN
-                        print(f"✅ Cotação atualizada: R$ {new_rate:.3f}")
-
-                    except Exception as e:
-                        print(f"⚠️ Erro ao buscar cotação: {e}")
-                        self.currency_status.value = f"⚠️ Cotação padrão: R$ {self.usd_to_brl_rate:.2f}"
-                        self.currency_status.color = ft.Colors.ORANGE
-
-                    # Simular atualização de preços AWS
-                    try:
-                        # Pequena pausa para simular busca
-                        import time
-                        time.sleep(1)
-
-                        # Verificar se preços mudaram (simulação)
-                        current_athena = self.aws_pricing["athena_per_tb"]
-                        self.aws_pricing_status.value = f"✅ Athena: ${current_athena:.2f}/TB • Glue: 4 tipos atualizados"
-                        self.aws_pricing_status.color = ft.Colors.PURPLE
-                        print("✅ Preços AWS verificados")
-
-                    except Exception as e:
-                        print(f"⚠️ Erro ao verificar preços: {e}")
-                        self.aws_pricing_status.value = "⚠️ Preços padrão carregados"
-                        self.aws_pricing_status.color = ft.Colors.ORANGE
-
-                    # Recalcular custos se já existem
-                    if self.athena_last_cost_usd > 0 or self.glue_last_cost_usd > 0:
-                        self.update_comparison()
-
-                except Exception as e:
-                    print(f"❌ Erro geral na atualização: {e}")
-                    self.currency_status.value = "❌ Erro na atualização"
-                    self.currency_status.color = ft.Colors.RED
-                    self.aws_pricing_status.value = "❌ Erro na atualização"
-                    self.aws_pricing_status.color = ft.Colors.RED
-
-                finally:
-                    self.simulator_progress.visible = False
-                    self.page.update()
-
-            # Executar atualizações em background
-            threading.Thread(target=update_all_data, daemon=True).start()
-
-        except Exception as e:
-            print(f"❌ Erro ao iniciar auto-atualização: {e}")
-            self.simulator_progress.visible = False
-            if hasattr(self, 'page'):
-                self.page.update()
-    def calculate_athena_cost(self, e):
-        """Calcula o custo do Athena baseado nos dados escaneados"""
-        try:
-            data_tb = float(self.athena_data_scanned.value or 0)
-
-            # Custo em USD
-            cost_usd = data_tb * self.aws_pricing["athena_per_tb"]
-            cost_brl = cost_usd * self.usd_to_brl_rate
-
-            self.athena_last_cost_usd = cost_usd
-
-            # Atualizar resultado
-            self.athena_cost_result.value = (
-                f"💵 USD: ${cost_usd:.2f}\n"
-                f"💰 BRL: R$ {cost_brl:.2f}\n"
-                f"📊 Dados: {data_tb} TB\n"
-                f"💲 Preço/TB: ${self.aws_pricing['athena_per_tb']:.2f}"
-            )
-            self.athena_cost_result.color = ft.Colors.GREEN
-
-            self.update_comparison()
-            self.page.update()
-
-        except ValueError:
-            self.athena_cost_result.value = "❌ Erro: Insira um valor numérico válido"
-            self.athena_cost_result.color = ft.Colors.RED
-            self.page.update()
-
-    def calculate_glue_cost(self, e):
-        """Calcula o custo do Glue baseado no tipo de máquina, DPUs e tempo"""
-        try:
-            machine_type = self.glue_machine_type.value
-            dpu_count = int(self.glue_dpu_count.value or 0)
-            execution_time_minutes = float(self.glue_execution_time.value or 0)
-
-            # Converter tempo para horas
-            execution_hours = execution_time_minutes / 60
-
-            # Obter preço por DPU-hora
-            price_per_dpu_hour = self.aws_pricing["glue_pricing"][machine_type]
-
-            # Calcular custo total em USD
-            total_dpu_hours = dpu_count * execution_hours
-            cost_usd = total_dpu_hours * price_per_dpu_hour
-            cost_brl = cost_usd * self.usd_to_brl_rate
-
-            self.glue_last_cost_usd = cost_usd
-
-            # Atualizar resultado
-            self.glue_cost_result.value = (
-                f"💵 USD: ${cost_usd:.2f}\n"
-                f"💰 BRL: R$ {cost_brl:.2f}\n"
-                f"⚙️ {machine_type}: {dpu_count} DPUs\n"
-                f"⏱️ Tempo: {execution_time_minutes}min ({execution_hours:.2f}h)\n"
-                f"📊 DPU-Horas: {total_dpu_hours:.2f}\n"
-                f"💲 Preço/DPU-h: ${price_per_dpu_hour:.2f}"
-            )
-            self.glue_cost_result.color = ft.Colors.GREEN
-
-            self.update_comparison()
-            self.page.update()
-
-        except (ValueError, KeyError):
-            self.glue_cost_result.value = "❌ Erro: Verifique os valores inseridos"
-            self.glue_cost_result.color = ft.Colors.RED
-            self.page.update()
-
-    def update_comparison(self):
-        """Atualiza a seção de comparação entre Athena e Glue"""
-        if self.athena_last_cost_usd > 0 or self.glue_last_cost_usd > 0:
-            athena_brl = self.athena_last_cost_usd * self.usd_to_brl_rate
-            glue_brl = self.glue_last_cost_usd * self.usd_to_brl_rate
-
-            comparison_text = "📊 Análise Comparativa Detalhada\n\n"
-
-            if self.athena_last_cost_usd > 0:
-                comparison_text += f"🔍 Amazon Athena:\n"
-                comparison_text += f"   💵 ${self.athena_last_cost_usd:.2f} USD\n"
-                comparison_text += f"   💰 R$ {athena_brl:.2f} BRL\n\n"
-
-            if self.glue_last_cost_usd > 0:
-                comparison_text += f"⚙️ AWS Glue:\n"
-                comparison_text += f"   💵 ${self.glue_last_cost_usd:.2f} USD\n"
-                comparison_text += f"   💰 R$ {glue_brl:.2f} BRL\n\n"
-
-            if self.athena_last_cost_usd > 0 and self.glue_last_cost_usd > 0:
-                comparison_text += "📈 Análise de Economia:\n"
-
-                if self.athena_last_cost_usd < self.glue_last_cost_usd:
-                    difference = self.glue_last_cost_usd - self.athena_last_cost_usd
-                    difference_brl = difference * self.usd_to_brl_rate
-                    percentage = (difference / self.glue_last_cost_usd) * 100
-                    comparison_text += f"✅ Athena é mais econômico!\n"
-                    comparison_text += f"💰 Economia: ${difference:.2f} USD (R$ {difference_brl:.2f})\n"
-                    comparison_text += f"📊 Percentual: {percentage:.1f}% mais barato"
-                elif self.glue_last_cost_usd < self.athena_last_cost_usd:
-                    difference = self.athena_last_cost_usd - self.glue_last_cost_usd
-                    difference_brl = difference * self.usd_to_brl_rate
-                    percentage = (difference / self.athena_last_cost_usd) * 100
-                    comparison_text += f"✅ Glue é mais econômico!\n"
-                    comparison_text += f"💰 Economia: ${difference:.2f} USD (R$ {difference_brl:.2f})\n"
-                    comparison_text += f"📊 Percentual: {percentage:.1f}% mais barato"
-                else:
-                    comparison_text += "⚖️ Custos praticamente equivalentes\n"
-                    comparison_text += "🤝 Ambas as opções têm custo similar"
-
-            comparison_text += f"\n\n💱 Taxa de Conversão: 1 USD = R$ {self.usd_to_brl_rate:.3f}"
-
-            self.comparison_result.content = ft.Text(
-                comparison_text,
-                size=13,
-                text_align=ft.TextAlign.LEFT,
-                color=ft.Colors.WHITE,
-                weight=ft.FontWeight.W_400
-            )
 
     # EventBridge Monitoring Functions
     def fetch_eventbridge_rules(self):
