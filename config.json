@@ -22,6 +22,9 @@
     "rt_squad_hierarchy": {
       "fluxo": [
         "boleto",
+        "adquirencia",
+        "cobranca",
+        "pix",
         "recorrente"
       ],
       "corebank": [
@@ -33,7 +36,8 @@
     },
     "environment_options": [
       "sirius",
-      "athena"
+      "athena",
+      "reprocess"
     ],
     "default_base_path": "s3",
     "current_selections": {
@@ -52,12 +56,11 @@
   },
   "glue": {
     "databases": [
-      "itau",
-      "teste"
+      "workspace_db"
     ]
   },
   "filters": {
-    "glue_monitoring": "job_pagamento",
+    "glue_monitoring": "",
     "stp_monitoring": "",
     "table_monitoring": "",
     "eventbridge_monitoring": ""
