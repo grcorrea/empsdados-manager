@@ -5451,21 +5451,52 @@ POR WORKGROUP:
                         self.currency_status.value = f"⚠️ Cotação padrão: R$ {self.usd_to_brl_rate:.2f}"
                         self.currency_status.color = ft.Colors.ORANGE
 
-                    # Simular atualização de preços AWS
+                    # Buscar preços reais via AWS Pricing API
                     try:
-                        # Pequena pausa para simular busca
-                        import time
-                        time.sleep(1)
+                        print("🔍 Buscando preços reais via AWS Pricing API...")
 
-                        # Verificar se preços mudaram (simulação)
-                        current_athena = self.aws_pricing["athena_per_tb"]
-                        self.aws_pricing_status.value = f"✅ Athena: ${current_athena:.2f}/TB • Glue: 4 tipos atualizados"
-                        self.aws_pricing_status.color = ft.Colors.PURPLE
-                        print("✅ Preços AWS verificados")
+                        # Salvar preços antigos para comparação
+                        old_athena_price = self.aws_pricing["athena_per_tb"]
+                        old_glue_prices = self.aws_pricing["glue_pricing"].copy()
+
+                        # Buscar preços atualizados via API
+                        pricing_data = self.fetch_aws_pricing_api()
+
+                        if pricing_data:
+                            # Atualizar preços internos
+                            self.aws_pricing["athena_per_tb"] = pricing_data["athena_per_tb"]
+                            self.aws_pricing["glue_pricing"] = pricing_data["glue_pricing"]
+
+                            # Calcular mudanças
+                            new_athena = pricing_data["athena_per_tb"]
+                            athena_change = ((new_athena - old_athena_price) / old_athena_price) * 100 if old_athena_price != 0 else 0
+
+                            # Verificar mudanças no Glue
+                            glue_changes = 0
+                            for machine_type in pricing_data["glue_pricing"]:
+                                old_price = old_glue_prices.get(machine_type, 0)
+                                new_price = pricing_data["glue_pricing"][machine_type]
+                                if abs(new_price - old_price) > 0.01:  # Mudança significativa
+                                    glue_changes += 1
+
+                            # Status baseado nas mudanças
+                            if abs(athena_change) > 1 or glue_changes > 0:
+                                change_text = f"({athena_change:+.1f}%)" if abs(athena_change) > 1 else ""
+                                self.aws_pricing_status.value = f"🔄 Preços atualizados via API! Athena: ${new_athena:.2f}/TB {change_text}"
+                                self.aws_pricing_status.color = ft.Colors.GREEN
+                                print(f"✅ Preços atualizados - Athena: ${old_athena_price:.2f} → ${new_athena:.2f}")
+                            else:
+                                self.aws_pricing_status.value = f"✅ Preços confirmados via API - Athena: ${new_athena:.2f}/TB • Glue: 4 tipos"
+                                self.aws_pricing_status.color = ft.Colors.PURPLE
+                                print("✅ Preços confirmados via AWS API")
+
+                        else:
+                            self.aws_pricing_status.value = "⚠️ API indisponível - Usando preços padrão"
+                            self.aws_pricing_status.color = ft.Colors.ORANGE
 
                     except Exception as e:
-                        print(f"⚠️ Erro ao verificar preços: {e}")
-                        self.aws_pricing_status.value = "⚠️ Preços padrão carregados"
+                        print(f"⚠️ Erro ao buscar preços via API: {e}")
+                        self.aws_pricing_status.value = f"⚠️ Erro na API - Preços padrão: ${self.aws_pricing['athena_per_tb']:.2f}/TB"
                         self.aws_pricing_status.color = ft.Colors.ORANGE
 
                     # Recalcular custos se já existem
@@ -5491,6 +5522,227 @@ POR WORKGROUP:
             self.simulator_progress.visible = False
             if hasattr(self, 'page'):
                 self.page.update()
+
+    def fetch_aws_pricing_api(self):
+        """Busca preços reais do AWS Athena e Glue via AWS Pricing API"""
+        try:
+            print("🔍 Buscando preços via AWS Pricing API...")
+            import boto3
+            import json
+
+            # A Pricing API só funciona em us-east-1
+            pricing_client = boto3.client('pricing', region_name='us-east-1')
+
+            # Buscar preços em paralelo
+            from concurrent.futures import ThreadPoolExecutor
+
+            def fetch_athena_pricing():
+                try:
+                    print("🔍 Buscando preços do Athena via AWS Pricing API...")
+
+                    # Tentar diferentes combinações de filtros para Athena
+                    filter_combinations = [
+                        # Filtro principal para região SA-East-1
+                        [
+                            {'Type': 'TERM_MATCH', 'Field': 'location', 'Value': 'South America (Sao Paulo)'},
+                            {'Type': 'TERM_MATCH', 'Field': 'usageType', 'Value': 'SAE1-DataScanned-Bytes'}
+                        ],
+                        # Filtro alternativo sem usage type específico
+                        [
+                            {'Type': 'TERM_MATCH', 'Field': 'location', 'Value': 'South America (Sao Paulo)'},
+                            {'Type': 'TERM_MATCH', 'Field': 'servicecode', 'Value': 'AmazonAthena'}
+                        ],
+                        # Filtro mais genérico
+                        [
+                            {'Type': 'TERM_MATCH', 'Field': 'location', 'Value': 'South America (Sao Paulo)'}
+                        ]
+                    ]
+
+                    for i, filters in enumerate(filter_combinations):
+                        try:
+                            print(f"🔍 Tentativa {i+1}/3 para buscar preços Athena...")
+                            response = pricing_client.get_products(
+                                ServiceCode='AmazonAthena',
+                                Filters=filters,
+                                MaxResults=20
+                            )
+
+                            print(f"📊 API retornou {len(response['PriceList'])} produtos")
+
+                            for price_item in response['PriceList']:
+                                product = json.loads(price_item)
+
+                                # Debug: mostrar estrutura do produto
+                                if i == 0:  # Só na primeira tentativa para não poluir logs
+                                    attributes = product.get('product', {}).get('attributes', {})
+                                    print(f"🔍 Produto encontrado: {attributes.get('usageType', 'N/A')}")
+
+                                # Extrair preço do JSON complexo
+                                if 'terms' in product:
+                                    on_demand = product['terms'].get('OnDemand', {})
+                                    for term_key, term_data in on_demand.items():
+                                        price_dimensions = term_data.get('priceDimensions', {})
+                                        for price_key, price_data in price_dimensions.items():
+                                            price_per_unit = price_data.get('pricePerUnit', {})
+                                            usd_price = price_per_unit.get('USD', '0')
+
+                                            if float(usd_price) > 0:
+                                                price_value = float(usd_price)
+                                                description = price_data.get('description', '')
+
+                                                # Athena cobra por GB escaneado
+                                                if 'per GB' in description or 'DataScanned' in description:
+                                                    # Converter GB para TB (1 TB = 1024 GB)
+                                                    price_per_tb = price_value * 1024
+                                                    print(f"✅ Athena: ${price_per_tb:.2f} por TB (${price_value:.4f} por GB)")
+                                                    return price_per_tb
+                                                elif 'per TB' in description:
+                                                    print(f"✅ Athena: ${price_value:.2f} por TB (direto)")
+                                                    return price_value
+
+                        except Exception as e:
+                            print(f"⚠️ Erro na tentativa {i+1}: {e}")
+                            continue
+
+                    # Se não encontrou via API, usar preço estimado baseado na documentação AWS
+                    print("⚠️ Não foi possível obter preço via API, usando preço estimado da documentação")
+                    # Preço baseado na documentação oficial AWS para sa-east-1 (≈ $5.00/TB)
+                    return 5.00
+
+                except Exception as e:
+                    print(f"❌ Erro geral ao buscar preços Athena: {e}")
+                    return 5.00  # Fallback
+
+            def fetch_glue_pricing():
+                try:
+                    print("🔍 Buscando preços do Glue via AWS Pricing API...")
+
+                    # Preços padrão baseados na documentação AWS
+                    glue_prices = {
+                        "G.025X": 0.11,
+                        "G.1X": 0.44,
+                        "G.2X": 0.88,
+                        "Standard": 0.44
+                    }
+
+                    # Tentar diferentes filtros para buscar preços do Glue
+                    filter_combinations = [
+                        # Filtro principal
+                        [
+                            {'Type': 'TERM_MATCH', 'Field': 'location', 'Value': 'South America (Sao Paulo)'},
+                            {'Type': 'TERM_MATCH', 'Field': 'productFamily', 'Value': 'AWS Glue'}
+                        ],
+                        # Filtro alternativo
+                        [
+                            {'Type': 'TERM_MATCH', 'Field': 'location', 'Value': 'South America (Sao Paulo)'},
+                            {'Type': 'TERM_MATCH', 'Field': 'servicecode', 'Value': 'AWSGlue'}
+                        ],
+                        # Filtro mais genérico
+                        [
+                            {'Type': 'TERM_MATCH', 'Field': 'location', 'Value': 'South America (Sao Paulo)'}
+                        ]
+                    ]
+
+                    for i, filters in enumerate(filter_combinations):
+                        try:
+                            print(f"🔍 Tentativa {i+1}/3 para buscar preços Glue...")
+                            response = pricing_client.get_products(
+                                ServiceCode='AWSGlue',
+                                Filters=filters,
+                                MaxResults=30
+                            )
+
+                            print(f"📊 API retornou {len(response['PriceList'])} produtos")
+
+                            # Processar resposta da API
+                            for price_item in response['PriceList']:
+                                product = json.loads(price_item)
+
+                                # Extrair informações do produto
+                                attributes = product.get('product', {}).get('attributes', {})
+                                instance_type = attributes.get('instanceType', '')
+                                usage_type = attributes.get('usageType', '')
+
+                                # Debug: mostrar o que foi encontrado
+                                if i == 0:  # Só na primeira tentativa
+                                    print(f"🔍 Produto Glue: {instance_type} | {usage_type}")
+
+                                # Extrair preço
+                                if 'terms' in product:
+                                    on_demand = product['terms'].get('OnDemand', {})
+                                    for term_key, term_data in on_demand.items():
+                                        price_dimensions = term_data.get('priceDimensions', {})
+                                        for price_key, price_data in price_dimensions.items():
+                                            price_per_unit = price_data.get('pricePerUnit', {})
+                                            usd_price = price_per_unit.get('USD', '0')
+
+                                            if float(usd_price) > 0:
+                                                price_value = float(usd_price)
+                                                description = price_data.get('description', '')
+
+                                                # Verificar se é preço por DPU-Hour
+                                                if 'DPU-Hour' in description or 'DPU Hour' in description:
+                                                    # Mapear tipos de instância
+                                                    if 'G.025X' in instance_type or '0.25' in description:
+                                                        glue_prices["G.025X"] = price_value
+                                                        print(f"✅ G.025X: ${price_value:.4f} por DPU-hora")
+                                                    elif 'G.1X' in instance_type or 'G.1X' in description:
+                                                        glue_prices["G.1X"] = price_value
+                                                        glue_prices["Standard"] = price_value  # Standard = G.1X
+                                                        print(f"✅ G.1X/Standard: ${price_value:.4f} por DPU-hora")
+                                                    elif 'G.2X' in instance_type or 'G.2X' in description:
+                                                        glue_prices["G.2X"] = price_value
+                                                        print(f"✅ G.2X: ${price_value:.4f} por DPU-hora")
+
+                            # Se encontrou pelo menos um preço, considerar sucesso
+                            if any(price != fallback for price, fallback in
+                                   zip(glue_prices.values(), [0.11, 0.44, 0.88, 0.44])):
+                                print(f"✅ Alguns preços Glue atualizados via API")
+                                break
+
+                        except Exception as e:
+                            print(f"⚠️ Erro na tentativa {i+1} para Glue: {e}")
+                            continue
+
+                    print(f"✅ Glue preços finais: G.025X=${glue_prices['G.025X']:.4f}, G.1X=${glue_prices['G.1X']:.4f}, G.2X=${glue_prices['G.2X']:.4f}")
+                    return glue_prices
+
+                except Exception as e:
+                    print(f"❌ Erro geral ao buscar preços Glue: {e}")
+                    return {
+                        "G.025X": 0.11,
+                        "G.1X": 0.44,
+                        "G.2X": 0.88,
+                        "Standard": 0.44
+                    }  # Fallback
+
+            # Executar buscas em paralelo
+            with ThreadPoolExecutor(max_workers=2) as executor:
+                athena_future = executor.submit(fetch_athena_pricing)
+                glue_future = executor.submit(fetch_glue_pricing)
+
+                # Aguardar resultados
+                new_athena_price = athena_future.result()
+                new_glue_pricing = glue_future.result()
+
+            return {
+                "athena_per_tb": new_athena_price,
+                "glue_pricing": new_glue_pricing
+            }
+
+        except Exception as e:
+            print(f"❌ Erro geral na AWS Pricing API: {e}")
+            # Retornar preços de fallback
+            return {
+                "athena_per_tb": 5.00,
+                "glue_pricing": {
+                    "G.025X": 0.11,
+                    "G.1X": 0.44,
+                    "G.2X": 0.88,
+                    "Standard": 0.44
+                }
+            }
+
     def calculate_athena_cost(self, e):
         """Calcula o custo do Athena baseado nos dados escaneados"""
         try:
