@@ -5206,6 +5206,12 @@ class AWSApp:
             keyboard_type=ft.KeyboardType.NUMBER
         )
 
+        self.glue_flex_checkbox = ft.Checkbox(
+            label="Flex",
+            value=False,
+            tooltip="Marque para simular execução Flex"
+        )
+
         # Botão calcular Glue
         self.calc_glue_button = ft.ElevatedButton(
             "💰 Calcular Glue",
@@ -5451,7 +5457,15 @@ class AWSApp:
                                         color=ft.Colors.GREEN_200,
                                         weight=ft.FontWeight.W_500),
                                 ft.Container(height=8),
-                                self.glue_execution_time,
+                                # self.glue_execution_time,
+                                ft.Row(
+                                    [
+                                        self.glue_execution_time,
+                                        self.glue_flex_checkbox
+                                    ],
+                                    spacing=15,
+                                    alignment=ft.MainAxisAlignment.START
+                                ),
 
                                 ft.Container(height=20),
                                 self.calc_glue_button,
@@ -5883,9 +5897,14 @@ class AWSApp:
             # Obter preço por DPU-hora
             price_per_dpu_hour = self.aws_pricing["glue_pricing"][machine_type]
 
+            # Flex
+            discount = 1.0
+            if self.glue_flex_checkbox.value:
+                discount = 0.67
+
             # Calcular custo total em USD
             total_dpu_hours = dpu_count * execution_hours
-            cost_usd = total_dpu_hours * price_per_dpu_hour
+            cost_usd = total_dpu_hours * price_per_dpu_hour * discount
             cost_brl = cost_usd * self.usd_to_brl_rate
 
             self.glue_last_cost_usd = cost_usd
