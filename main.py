@@ -1295,7 +1295,6 @@ class AWSApp:
             )
         )
 
-        # Botão de exportação para Excel
         self.export_stpf_button = ft.IconButton(
             icon=ft.Icons.FILE_DOWNLOAD,
             tooltip="Exportar tabela para Excel",
@@ -1322,11 +1321,11 @@ class AWSApp:
             size=12,
             color=ft.Colors.GREY_500
         )
-
+        
         # Tabela de STPF
-        self.selected_stpf_file = None # Guardar caminho do arquivo .txt selecionado
         self.selected_stpf_name = None # Nome da Step Function selecionada na tabela
 
+        # Tabela de STPF
         self.stpf_table = ft.DataTable(
             columns=[
                 ft.DataColumn(ft.Text("Name", weight=ft.FontWeight.BOLD)),
@@ -1336,7 +1335,9 @@ class AWSApp:
             ],
             rows=[],
             expand=True,
-            data_row_color={ft.ControlState.SELECTED: ft.Colors.BLUE_900}
+
+            # Selected row highlighting
+            data_row_color={ft.ControlState.SELECTED: ft.Colors.BLUE_900},
             # on_select_changed=self.on_stpf_row_selected
         )
 
@@ -1373,17 +1374,11 @@ class AWSApp:
             build_kpi_container(self.stpf_time, "Minutes", ft.Colors.BLUE, ft.Colors.GREY_800),
         ], alignment=ft.MainAxisAlignment.SPACE_EVENLY, expand=True)
 
-        # Linha de payload + botões
+        ###############
+        # Starting step function
         self.payload_stpf = ft.TextField(
             label="Payload Step Function",
-            expand=True,
-        )
-
-        self.stpf_file_status = ft.Text(
-            "",
-            size=10,
-            color=ft.Colors.GREEN_400,
-            visible=False
+            expand=True
         )
 
         # Botão de upload de step functions
@@ -1396,20 +1391,7 @@ class AWSApp:
                 color=ft.Colors.BLACK,
                 shape=ft.RoundedRectangleBorder(radius=6),
             ),
-            on_click=lambda e: self.page.dialog.open(self.file_picker_dialog)
-        )
-
-        self.file_picker = ft.FilePicker(on_result=self.on_stpf_file_selected)
-        self.page.overlay.append(self.file_picker)
-
-        self.file_picker_dialog = ft.AlertDialog(
-            modal=True,
-            title=ft.Text("Selecione um arquivo .txt"),
-            content=ft.Text("Escolha um arquivo contendo os Step Functions (um por linha)"),
-            actions=[
-                ft.TextButton("Cancelar", on_click=lambda e: setattr(self.file_picker_dialog, "open", False)),
-                ft.TextButton("Selecionar", on_click=lambda e: self.file_picker.pick_files(allowed_extensions=["txt"]))
-            ]
+            # on_click=lambda e: self.page.dialog.open(self.file_picker_dialog)
         )
 
         # Botão de start step functions
@@ -1427,7 +1409,7 @@ class AWSApp:
 
         self.payload_row_stpf = ft.Row(
             [
-                # self.payload_stpf,
+                self.payload_stpf,
                 self.upload_button_stpf,
                 self.start_button_stpf,
             ],
@@ -1435,6 +1417,7 @@ class AWSApp:
             expand=True,
             alignment=ft.MainAxisAlignment.SPACE_BETWEEN,
         )
+        ###############
 
         # Container scrollável para a tabela com estilo aprimorado
         self.table_container_stpf = ft.Container(
@@ -1523,6 +1506,7 @@ class AWSApp:
                     )
                 ),
 
+
                 # Container da tabela
                 ft.Container(
                     content=ft.Column([
@@ -1545,87 +1529,50 @@ class AWSApp:
             expand=True,
             bgcolor=ft.Colors.GREY_900
         )
-
-    def on_stpf_file_selected(self, e: ft.FilePickerResultEvent):
-        if e.files and len(e.files) > 0:
-            self.selected_stpf_file = e.files[0].path
-            self.stpf_file_status.value = "📂 Arquivo de step functions selecionado"
-            self.stpf_file_status.visible = True
-            print(f"✅ Arquivo selecionado: {self.selected_stpf_file}")
-        else:
-            self.selected_stpf_file = None
-            self.stpf_file_status.value = ""
-            self.stpf_file_status.visible = False
-        self.page.update()
         
-    # def on_stpf_row_selected(self, e: ft.DataRowSelectEvent):
-    #     try:
-    #         # Nome está na primeira célula da linha
-    #         row_index = e.row_index
-    #         if 0 <= row_index < len(self.filtered_stpf):
-    #             self.selected_stpf_name = self.filtered_stpf[row_index]["name"]
-    #             print(f"✅ Step Function selecionada: {self.selected_stpf_name}")
-    #     except Exception as ex:
-    #         print(f"❌ Erro ao selecionar Step Function: {ex}")
-    #         self.selected_stpf_name = None
+    def on_stpf_row_selected(self, e, name):
+        if e.control.selected:  # só atualiza quando seleciona
+            self.selected_stpf_name = name
+            print(f"✅ Step Function selecionada: {self.selected_stpf_name}")
 
     def start_step_function_execution(self, e=None):
-        payload_text = self.payload_stpf.value.strip() or "{}"
+        """Inicia a execução da Step Function selecionada"""
         try:
-            payload = json.loads(payload_text)
-        except json.JSONDecodeError:
-            self.monitoring_status_sptf.value = "❌ Payload inválido (não é JSON)"
-            self.monitoring_status_sptf.color = ft.Colors.RED
-            self.page.update()
-            return
+            if not self.selected_stpf_name:
+                print("❌ Nenhuma Step Function selecionada.")
+                return
 
-        client = boto3.client("stepfunctions")
+            payload_text = self.payload_stpf.value.strip()
+            if not payload_text:
+                print("⚠️ Payload vazio. Informe um JSON válido no campo.")
+                return
 
-        # Caso 1: linha da tabela selecionada
-        if self.selected_stpf_name:
+            # Validar se é um JSON válido
             try:
-                response = client.start_execution(
-                    stateMachineArn=self.selected_stpf_name,
-                    input=json.dumps(payload)
-                )
-                self.monitoring_status_sptf.value = f"✅ Execução iniciada: {response['executionArn']}"
-                self.monitoring_status_sptf.color = ft.Colors.GREEN
-            except Exception as ex:
-                self.monitoring_status_sptf.value = f"❌ Erro: {ex}"
-                self.monitoring_status_sptf.color = ft.Colors.RED
+                payload = json.loads(payload_text)
+            except json.JSONDecodeError:
+                print("❌ Payload inválido. Informe um JSON válido.")
+                return
 
-        # Caso 2: arquivo selecionado com várias Step Functions
-        elif self.selected_stpf_file:
-            try:
-                with open(self.selected_stpf_file, "r", encoding="utf-8") as f:
-                    step_functions = [line.strip() for line in f.readlines() if line.strip()]
+            # Criar cliente boto3
+            sfn_client = boto3.client("stepfunctions")
 
-                if not step_functions:
-                    self.monitoring_status_sptf.value = "⚠️ Arquivo vazio"
-                    self.monitoring_status_sptf.color = ft.Colors.ORANGE
-                else:
-                    for arn in step_functions:
-                        try:
-                            response = client.start_execution(
-                                stateMachineArn=arn,
-                                input=json.dumps(payload)
-                            )
-                            print(f"✅ Step Function iniciada: {arn} -> {response['executionArn']}")
-                        except Exception as inner_ex:
-                            print(f"❌ Erro ao iniciar {arn}: {inner_ex}")
+            # Montar ARN (exemplo: substitua se precisar buscar dinamicamente)
+            # Aqui supõe-se que self.selected_stpf_name seja o ARN completo.
+            # Caso contrário, você pode concatenar com o prefixo da conta/região.
+            state_machine_arn = "" + self.selected_stpf_name
 
-                    self.monitoring_status_sptf.value = f"✅ {len(step_functions)} Step Functions iniciadas"
-                    self.monitoring_status_sptf.color = ft.Colors.GREEN
+            # Executar Step Function
+            response = sfn_client.start_execution(
+                stateMachineArn=state_machine_arn,
+                input=json.dumps(payload)
+            )
 
-            except Exception as ex:
-                self.monitoring_status_sptf.value = f"❌ Erro ao processar arquivo: {ex}"
-                self.monitoring_status_sptf.color = ft.Colors.RED
+            print(f"✅ Step Function iniciada com sucesso! ExecutionArn: {response['executionArn']}")
 
-        else:
-            self.monitoring_status_sptf.value = "⚠️ Nenhuma Step Function selecionada ou arquivo carregado"
-            self.monitoring_status_sptf.color = ft.Colors.ORANGE
+        except Exception as ex:
+            print(f"❌ Erro ao iniciar Step Function: {ex}")
 
-        self.page.update()
 
     def update_s3_path(self, e=None):
         prefix = self.prefix_dropdown.value
@@ -2440,7 +2387,8 @@ class AWSApp:
                     ft.DataCell(ft.Text(job['status'], size=12, color=status_color, weight=ft.FontWeight.BOLD)),
                     ft.DataCell(ft.Text(job['last_execution'], size=12, color=ft.Colors.WHITE)),
                     ft.DataCell(ft.Text(job['duration'], size=12, color=ft.Colors.WHITE)),
-                ]
+                ],
+                on_select_changed=lambda e, name=stpf["name"]: self.on_stpf_row_selected(e, name)
             )
             self.stpf_table.rows.append(row)
 
@@ -4852,12 +4800,12 @@ class AWSApp:
             # Criar conteúdo do resumo
             summary_text = f"""RESUMO DO PERÍODO ({period.upper()})
 
-Custo Total: ${total_cost:.2f}
-Queries Totais: {total_queries:,}
-Dados Processados: {total_data_gb:.2f} GB
-
-POR WORKGROUP:
-"""
+            Custo Total: ${total_cost:.2f}
+            Queries Totais: {total_queries:,}
+            Dados Processados: {total_data_gb:.2f} GB
+            
+            POR WORKGROUP:
+            """
 
             for wg, data in workgroup_costs.items():
                 percentage = (data['cost'] / total_cost * 100) if total_cost > 0 else 0
