@@ -1231,7 +1231,6 @@ class AWSApp:
         )
 
     def create_monitoring_stpf_tab(self):
-
         # Filtro de busca
         self.job_filter_stpf = ft.TextField(
             label="Filtrar Step Functions (separe por vírgula)",
@@ -1322,6 +1321,9 @@ class AWSApp:
             size=12,
             color=ft.Colors.GREY_500
         )
+        
+        # Tabela de STPF
+        self.selected_stpf_name = None # Nome da Step Function selecionada na tabela
 
         # Tabela de STPF
         self.stpf_table = ft.DataTable(
@@ -1332,7 +1334,11 @@ class AWSApp:
                 ft.DataColumn(ft.Text("Duração", weight=ft.FontWeight.BOLD)),
             ],
             rows=[],
-            expand=True
+            expand=True,
+
+            # Selected row highlighting
+            data_row_color={ft.ControlState.SELECTED: ft.Colors.BLUE_900},
+            # on_select_changed=self.on_stpf_row_selected
         )
 
         # KPIs de jobs (success, failed, running)
@@ -1367,6 +1373,51 @@ class AWSApp:
             build_kpi_container(self.stpf_running, "Running", ft.Colors.GREY, ft.Colors.GREY_800),
             build_kpi_container(self.stpf_time, "Minutes", ft.Colors.BLUE, ft.Colors.GREY_800),
         ], alignment=ft.MainAxisAlignment.SPACE_EVENLY, expand=True)
+
+        ###############
+        # Starting step function
+        self.payload_stpf = ft.TextField(
+            label="Payload Step Function",
+            expand=True
+        )
+
+        # Botão de upload de step functions
+        self.upload_button_stpf = ft.IconButton(
+            icon=ft.Icons.UPLOAD,
+            icon_size=20,
+            tooltip="Carregar arquivo de Step Functions (.txt)",
+            style=ft.ButtonStyle(
+                bgcolor=ft.Colors.AMBER_600,
+                color=ft.Colors.BLACK,
+                shape=ft.RoundedRectangleBorder(radius=6),
+            ),
+            # on_click=lambda e: self.page.dialog.open(self.file_picker_dialog)
+        )
+
+        # Botão de start step functions
+        self.start_button_stpf = ft.IconButton(
+            icon=ft.Icons.PLAY_ARROW,
+            icon_size=20,
+            tooltip="Iniciar Step Function",
+            style=ft.ButtonStyle(
+                bgcolor=ft.Colors.BLUE_600,
+                color=ft.Colors.WHITE,
+                shape=ft.RoundedRectangleBorder(radius=6),
+            ),
+            on_click=self.start_step_function_execution
+        )
+
+        self.payload_row_stpf = ft.Row(
+            [
+                self.payload_stpf,
+                self.upload_button_stpf,
+                self.start_button_stpf,
+            ],
+            spacing=10,
+            expand=True,
+            alignment=ft.MainAxisAlignment.SPACE_BETWEEN,
+        )
+        ###############
 
         # Container scrollável para a tabela com estilo aprimorado
         self.table_container_stpf = ft.Container(
@@ -1463,6 +1514,8 @@ class AWSApp:
                         ft.Container(height=10),
                         self.kpi_row_stpf,
                         ft.Container(height=15),
+                        self.payload_row_stpf,
+                        ft.Container(height=15),
                         self.table_container_stpf,
                     ]),
                     expand=True
@@ -1476,6 +1529,50 @@ class AWSApp:
             expand=True,
             bgcolor=ft.Colors.GREY_900
         )
+        
+    def on_stpf_row_selected(self, e, name):
+        if e.control.selected:  # só atualiza quando seleciona
+            self.selected_stpf_name = name
+            print(f"✅ Step Function selecionada: {self.selected_stpf_name}")
+
+    def start_step_function_execution(self, e=None):
+        """Inicia a execução da Step Function selecionada"""
+        try:
+            if not self.selected_stpf_name:
+                print("❌ Nenhuma Step Function selecionada.")
+                return
+
+            payload_text = self.payload_stpf.value.strip()
+            if not payload_text:
+                print("⚠️ Payload vazio. Informe um JSON válido no campo.")
+                return
+
+            # Validar se é um JSON válido
+            try:
+                payload = json.loads(payload_text)
+            except json.JSONDecodeError:
+                print("❌ Payload inválido. Informe um JSON válido.")
+                return
+
+            # Criar cliente boto3
+            sfn_client = boto3.client("stepfunctions")
+
+            # Montar ARN (exemplo: substitua se precisar buscar dinamicamente)
+            # Aqui supõe-se que self.selected_stpf_name seja o ARN completo.
+            # Caso contrário, você pode concatenar com o prefixo da conta/região.
+            state_machine_arn = "" + self.selected_stpf_name
+
+            # Executar Step Function
+            response = sfn_client.start_execution(
+                stateMachineArn=state_machine_arn,
+                input=json.dumps(payload)
+            )
+
+            print(f"✅ Step Function iniciada com sucesso! ExecutionArn: {response['executionArn']}")
+
+        except Exception as ex:
+            print(f"❌ Erro ao iniciar Step Function: {ex}")
+
 
     def update_s3_path(self, e=None):
         prefix = self.prefix_dropdown.value
@@ -2290,7 +2387,8 @@ class AWSApp:
                     ft.DataCell(ft.Text(job['status'], size=12, color=status_color, weight=ft.FontWeight.BOLD)),
                     ft.DataCell(ft.Text(job['last_execution'], size=12, color=ft.Colors.WHITE)),
                     ft.DataCell(ft.Text(job['duration'], size=12, color=ft.Colors.WHITE)),
-                ]
+                ],
+                on_select_changed=lambda e, name=stpf["name"]: self.on_stpf_row_selected(e, name)
             )
             self.stpf_table.rows.append(row)
 
@@ -4702,12 +4800,12 @@ class AWSApp:
             # Criar conteúdo do resumo
             summary_text = f"""RESUMO DO PERÍODO ({period.upper()})
 
-Custo Total: ${total_cost:.2f}
-Queries Totais: {total_queries:,}
-Dados Processados: {total_data_gb:.2f} GB
-
-POR WORKGROUP:
-"""
+            Custo Total: ${total_cost:.2f}
+            Queries Totais: {total_queries:,}
+            Dados Processados: {total_data_gb:.2f} GB
+            
+            POR WORKGROUP:
+            """
 
             for wg, data in workgroup_costs.items():
                 percentage = (data['cost'] / total_cost * 100) if total_cost > 0 else 0
@@ -5108,6 +5206,12 @@ POR WORKGROUP:
             keyboard_type=ft.KeyboardType.NUMBER
         )
 
+        self.glue_flex_checkbox = ft.Checkbox(
+            label="Flex",
+            value=False,
+            tooltip="Marque para simular execução Flex"
+        )
+
         # Botão calcular Glue
         self.calc_glue_button = ft.ElevatedButton(
             "💰 Calcular Glue",
@@ -5353,7 +5457,15 @@ POR WORKGROUP:
                                         color=ft.Colors.GREEN_200,
                                         weight=ft.FontWeight.W_500),
                                 ft.Container(height=8),
-                                self.glue_execution_time,
+                                # self.glue_execution_time,
+                                ft.Row(
+                                    [
+                                        self.glue_execution_time,
+                                        self.glue_flex_checkbox
+                                    ],
+                                    spacing=15,
+                                    alignment=ft.MainAxisAlignment.START
+                                ),
 
                                 ft.Container(height=20),
                                 self.calc_glue_button,
@@ -5785,9 +5897,14 @@ POR WORKGROUP:
             # Obter preço por DPU-hora
             price_per_dpu_hour = self.aws_pricing["glue_pricing"][machine_type]
 
+            # Flex
+            discount = 1.0
+            if self.glue_flex_checkbox.value:
+                discount = 0.67
+
             # Calcular custo total em USD
             total_dpu_hours = dpu_count * execution_hours
-            cost_usd = total_dpu_hours * price_per_dpu_hour
+            cost_usd = total_dpu_hours * price_per_dpu_hour * discount
             cost_brl = cost_usd * self.usd_to_brl_rate
 
             self.glue_last_cost_usd = cost_usd
