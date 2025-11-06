@@ -48,13 +48,13 @@ class AWSApp:
         self.setup_page()
         self.setup_status_bar()
         self.setup_layout_with_sidebar()
-        self.check_login_status()
+        # self.check_login_status()  # Não tentar conectar automaticamente no startup
 
     def on_folder_selected(self, e: ft.FilePickerResultEvent):
         """Callback quando uma pasta é selecionada para export"""
         if e.path:
             self.export_folder = Path(e.path)
-            print(f"📁 Pasta para export selecionada: {self.export_folder}")
+            print(f" Pasta para export selecionada: {self.export_folder}")
 
             # Executar callback se definido
             if hasattr(self, 'callback_after_folder_selection') and self.callback_after_folder_selection:
@@ -62,24 +62,24 @@ class AWSApp:
                     self.callback_after_folder_selection()
                     self.callback_after_folder_selection = None  # Limpar callback após uso
                 except Exception as e:
-                    print(f"❌ Erro ao executar callback após seleção de pasta: {e}")
+                    print(f" Erro ao executar callback após seleção de pasta: {e}")
 
             # Mostrar feedback visual se houver uma aba ativa
             try:
                 if hasattr(self, 'monitoring_status_eventbridge') and self.current_section == "EventBridge":
-                    self.monitoring_status_eventbridge.value = f"📁 Pasta selecionada: {self.export_folder.name}"
+                    self.monitoring_status_eventbridge.value = f" Pasta selecionada: {self.export_folder.name}"
                     self.monitoring_status_eventbridge.color = ft.Colors.BLUE
                     self.page.update()
                 elif hasattr(self, 'monitoring_status_tables') and self.current_section == "Monitoring Tables":
-                    self.monitoring_status_tables.value = f"📁 Pasta selecionada: {self.export_folder.name}"
+                    self.monitoring_status_tables.value = f" Pasta selecionada: {self.export_folder.name}"
                     self.monitoring_status_tables.color = ft.Colors.BLUE
                     self.page.update()
                 elif hasattr(self, 'monitoring_status') and self.current_section == "Monitoring Glue":
-                    self.monitoring_status.value = f"📁 Pasta selecionada: {self.export_folder.name}"
+                    self.monitoring_status.value = f" Pasta selecionada: {self.export_folder.name}"
                     self.monitoring_status.color = ft.Colors.BLUE
                     self.page.update()
                 elif hasattr(self, 'monitoring_status_sptf') and self.current_section == "Monitoring STF":
-                    self.monitoring_status_sptf.value = f"📁 Pasta selecionada: {self.export_folder.name}"
+                    self.monitoring_status_sptf.value = f" Pasta selecionada: {self.export_folder.name}"
                     self.monitoring_status_sptf.color = ft.Colors.BLUE
                     self.page.update()
             except:
@@ -315,64 +315,67 @@ class AWSApp:
         )
 
     def refresh_aws_status(self, e=None):
-        """Atualiza o status AWS atual e variáveis globais"""
+        """Atualiza o status AWS atual e variáveis globais (sem conectar automaticamente)"""
         try:
             # Verificar profile atual do ambiente
             env_profile = os.environ.get('AWS_PROFILE', 'default')
 
-            # Tentar obter identity usando STS
-            sts_client = boto3.client('sts')
-            identity = sts_client.get_caller_identity()
+            # Tentar obter identity usando STS (com tratamento de erro)
+            try:
+                sts_client = boto3.client('sts')
+                identity = sts_client.get_caller_identity()
 
-            # Atualizar variáveis globais
-            self.current_profile = env_profile
-            self.current_account_id = identity.get('Account', 'N/A')
-            self.current_user_arn = identity.get('Arn', 'N/A')
+                # Atualizar variáveis globais
+                self.current_profile = env_profile
+                self.current_account_id = identity.get('Account', 'N/A')
+                self.current_user_arn = identity.get('Arn', 'N/A')
 
-            # Atualizar interface
-            self.status_profile_text.value = f"Profile: {self.current_profile}"
-            self.status_profile_text.color = ft.Colors.GREEN
+                # Atualizar interface
+                self.status_profile_text.value = f"Profile: {self.current_profile}"
+                self.status_profile_text.color = ft.Colors.GREEN
 
-            account_display = f"Account ID: {self.current_account_id}"
-            if len(account_display) > 25:
-                account_display = f"Account: ...{self.current_account_id[-8:]}"
-            self.status_account_text.value = account_display
-            self.status_account_text.color = ft.Colors.GREEN
+                account_display = f"Account ID: {self.current_account_id}"
+                if len(account_display) > 25:
+                    account_display = f"Account: ...{self.current_account_id[-8:]}"
+                self.status_account_text.value = account_display
+                self.status_account_text.color = ft.Colors.GREEN
 
-            # Atualizar caminhos S3 se a aba estiver carregada
-            if hasattr(self, 'rt_dropdown'):
-                self.update_s3_path()
+                # Atualizar caminhos S3 se a aba estiver carregada
+                if hasattr(self, 'rt_dropdown'):
+                    self.update_s3_path()
 
-            # Atualizar status do monitoring se a aba estiver carregada
-            if hasattr(self, 'monitoring_status'):
-                self.monitoring_status.value = "✅ Conectado - Clique em 'Atualizar' para carregar jobs"
-                self.monitoring_status.color = ft.Colors.GREEN
+                # Atualizar status do monitoring se a aba estiver carregada
+                if hasattr(self, 'monitoring_status'):
+                    self.monitoring_status.value = " Conectado - Clique em 'Atualizar' para carregar jobs"
+                    self.monitoring_status.color = ft.Colors.GREEN
 
-            return True
+                return True
 
-        except (NoCredentialsError, ClientError, Exception) as e:
-            # Limpar variáveis globais
-            self.current_profile = None
-            self.current_account_id = None
-            self.current_user_arn = None
+            except (NoCredentialsError, ClientError, Exception) as e:
+                # Se não conseguir conectar, definir estado não logado
+                print(f"Aviso: Não foi possível verificar status AWS: {e}")
+                self.current_profile = None
+                self.current_account_id = None
+                self.current_user_arn = None
 
-            # Atualizar interface
-            self.status_profile_text.value = "Profile: Não logado"
-            self.status_profile_text.color = ft.Colors.GREY_400
+                # Atualizar interface para estado não logado
+                self.status_profile_text.value = "Profile: Não logado"
+                self.status_profile_text.color = ft.Colors.GREY_400
 
-            self.status_account_text.value = "Account ID: N/A"
-            self.status_account_text.color = ft.Colors.GREY_400
+                self.status_account_text.value = "Account ID: N/A"
+                self.status_account_text.color = ft.Colors.GREY_400
 
-            # Atualizar caminhos S3 se a aba estiver carregada
-            if hasattr(self, 'rt_dropdown'):
-                self.update_s3_path()
+                # Atualizar caminhos S3 se a aba estiver carregada
+                if hasattr(self, 'rt_dropdown'):
+                    self.update_s3_path()
 
-            # Atualizar status do monitoring se a aba estiver carregada
-            if hasattr(self, 'monitoring_status'):
-                self.monitoring_status.value = "Faça login primeiro para visualizar jobs"
-                self.monitoring_status.color = ft.Colors.GREY_400
+                # Atualizar status do monitoring se a aba estiver carregada
+                if hasattr(self, 'monitoring_status'):
+                    self.monitoring_status.value = "Faça login primeiro para visualizar jobs"
+                    self.monitoring_status.color = ft.Colors.GREY_400
 
-            return False
+                return False
+
         finally:
             if hasattr(self, 'page'):
                 self.page.update()
@@ -829,7 +832,7 @@ class AWSApp:
 
         # Open Folder Button
         self.open_folder_button = ft.ElevatedButton(
-            "📁 Abrir Pasta",
+            " Abrir Pasta",
             on_click=self.open_local_folder,
             disabled=True,
             width=130,
@@ -850,7 +853,7 @@ class AWSApp:
 
         # Sync Buttons
         self.sync_to_s3_button = ft.ElevatedButton(
-            "🔄 Local → S3",
+            " Local → S3",
             on_click=self.sync_to_s3,
             disabled=True,
             width=160,
@@ -863,7 +866,7 @@ class AWSApp:
         )
 
         self.sync_from_s3_button = ft.ElevatedButton(
-            "🔄 S3 → Local",
+            " S3 → Local",
             on_click=self.sync_from_s3,
             disabled=True,
             width=160,
@@ -1025,7 +1028,7 @@ class AWSApp:
 
         # Botão de atualização manual
         self.refresh_button = ft.ElevatedButton(
-            "🔄 Atualizar",
+            " Atualizar",
             on_click=self.refresh_jobs,
             width=130,
             height=40,
@@ -1272,7 +1275,7 @@ class AWSApp:
 
         # Botão de atualização manual
         self.refresh_button_stpf = ft.ElevatedButton(
-            "🔄 Atualizar",
+            " Atualizar",
             on_click=self.refresh_stpf_jobs,
             width=130,
             height=40,
@@ -1533,25 +1536,25 @@ class AWSApp:
     def on_stpf_row_selected(self, e, name):
         if e.control.selected:  # só atualiza quando seleciona
             self.selected_stpf_name = name
-            print(f"✅ Step Function selecionada: {self.selected_stpf_name}")
+            print(f" Step Function selecionada: {self.selected_stpf_name}")
 
     def start_step_function_execution(self, e=None):
         """Inicia a execução da Step Function selecionada"""
         try:
             if not self.selected_stpf_name:
-                print("❌ Nenhuma Step Function selecionada.")
+                print(" Nenhuma Step Function selecionada.")
                 return
 
             payload_text = self.payload_stpf.value.strip()
             if not payload_text:
-                print("⚠️ Payload vazio. Informe um JSON válido no campo.")
+                print(" Payload vazio. Informe um JSON válido no campo.")
                 return
 
             # Validar se é um JSON válido
             try:
                 payload = json.loads(payload_text)
             except json.JSONDecodeError:
-                print("❌ Payload inválido. Informe um JSON válido.")
+                print(" Payload inválido. Informe um JSON válido.")
                 return
 
             # Criar cliente boto3
@@ -1568,10 +1571,10 @@ class AWSApp:
                 input=json.dumps(payload)
             )
 
-            print(f"✅ Step Function iniciada com sucesso! ExecutionArn: {response['executionArn']}")
+            print(f" Step Function iniciada com sucesso! ExecutionArn: {response['executionArn']}")
 
         except Exception as ex:
-            print(f"❌ Erro ao iniciar Step Function: {ex}")
+            print(f" Erro ao iniciar Step Function: {ex}")
 
 
     def update_s3_path(self, e=None):
@@ -1763,7 +1766,7 @@ class AWSApp:
             glue_client = boto3.client('glue')
 
             # 1. Buscar todos os jobs (rápido)
-            print("🔍 Listando jobs do Glue...")
+            print(" Listando jobs do Glue...")
             paginator = glue_client.get_paginator('get_jobs')
             all_job_names = []
 
@@ -1772,15 +1775,15 @@ class AWSApp:
                     all_job_names.append(job['Name'])
 
             if not all_job_names:
-                print("📋 Nenhum job encontrado na conta")
+                print(" Nenhum job encontrado na conta")
                 return []
 
-            print(f"📋 Encontrados {len(all_job_names)} jobs Glue. Iniciando busca paralela...")
+            print(f" Encontrados {len(all_job_names)} jobs Glue. Iniciando busca paralela...")
 
             # Update UI with job count
             if hasattr(self, 'monitoring_status'):
                 try:
-                    self.monitoring_status.value = f"🔄 Encontrados {len(all_job_names)} jobs. Carregando detalhes..."
+                    self.monitoring_status.value = f" Encontrados {len(all_job_names)} jobs. Carregando detalhes..."
                     self.page.update()
                 except:
                     pass
@@ -1817,21 +1820,21 @@ class AWSApp:
                             if hasattr(self, 'monitoring_status'):
                                 try:
                                     eta_remaining = (len(all_job_names) - completed) / jobs_per_sec if jobs_per_sec > 0 else 0
-                                    self.monitoring_status.value = f"🔄 {completed}/{len(all_job_names)} ({progress_percent:.0f}%) - ETA: {eta_remaining:.0f}s"
+                                    self.monitoring_status.value = f" {completed}/{len(all_job_names)} ({progress_percent:.0f}%) - ETA: {eta_remaining:.0f}s"
                                     self.page.update()
                                 except:
                                     pass
 
                     except Exception as e:
                         job_name = future_to_job[future]
-                        print(f"❌ Erro ao buscar detalhes do job {job_name}: {e}")
+                        print(f" Erro ao buscar detalhes do job {job_name}: {e}")
 
             total_time = time.time() - start_time
-            print(f"✅ Carregamento concluído! {len(jobs)} jobs processados em {total_time:.1f}s")
+            print(f" Carregamento concluído! {len(jobs)} jobs processados em {total_time:.1f}s")
             return jobs
 
         except Exception as e:
-            print(f"❌ Erro ao buscar jobs do Glue: {e}")
+            print(f" Erro ao buscar jobs do Glue: {e}")
             return []
 
     def refresh_jobs(self, e=None):
@@ -1844,7 +1847,7 @@ class AWSApp:
 
         # Verificar se cache é recente (menos de 15 minutos)
         if self.is_cache_fresh("glue", 15):
-            self.monitoring_status.value = "⏰ Cache recente (menos de 15 min) - Use o cache existente para evitar custos adicionais"
+            self.monitoring_status.value = " Cache recente (menos de 15 min) - Use o cache existente para evitar custos adicionais"
             self.monitoring_status.color = ft.Colors.BLUE
             self.page.update()
             return
@@ -1871,7 +1874,7 @@ class AWSApp:
 
                     self.last_update_text.value = f"Última atualização: {datetime.now().strftime('%H:%M:%S')}"
 
-                    self.monitoring_status.value = f"✅ {len(jobs)} jobs encontrados"
+                    self.monitoring_status.value = f" {len(jobs)} jobs encontrados"
 
                     self.monitoring_status.color = ft.Colors.GREEN
 
@@ -1886,7 +1889,7 @@ class AWSApp:
             threading.Thread(target=fetch_in_background, daemon=True).start()
 
         except Exception as e:
-            self.monitoring_status.value = f"❌ Erro: {str(e)}"
+            self.monitoring_status.value = f" Erro: {str(e)}"
             self.monitoring_status.color = ft.Colors.RED
             self.monitoring_progress.visible = False
             self.refresh_button.disabled = False
@@ -2119,7 +2122,7 @@ class AWSApp:
 
         # Verificar se cache é recente (menos de 15 minutos)
         if self.is_cache_fresh("stpf", 15):
-            self.monitoring_status_sptf.value = "⏰ Cache recente (menos de 15 min) - Use o cache existente para evitar custos adicionais"
+            self.monitoring_status_sptf.value = " Cache recente (menos de 15 min) - Use o cache existente para evitar custos adicionais"
             self.monitoring_status_sptf.color = ft.Colors.BLUE
             self.page.update()
             return
@@ -2145,7 +2148,7 @@ class AWSApp:
                         self.save_stpf_cache(jobs)
 
                     self.last_update_text_stpf.value = f"Última atualização: {datetime.now().strftime('%H:%M:%S')}"
-                    self.monitoring_status_sptf.value = f"✅ {len(jobs)} Step Functions encontradas"
+                    self.monitoring_status_sptf.value = f" {len(jobs)} Step Functions encontradas"
                     self.monitoring_status_sptf.color = ft.Colors.GREEN
 
                     self.monitoring_progress_stpf.visible = False
@@ -2159,7 +2162,7 @@ class AWSApp:
             threading.Thread(target=fetch_in_background, daemon=True).start()
 
         except Exception as e:
-            self.monitoring_status_sptf.value = f"❌ Erro: {str(e)}"
+            self.monitoring_status_sptf.value = f" Erro: {str(e)}"
             self.monitoring_status_sptf.color = ft.Colors.RED
             self.monitoring_progress_stpf.visible = False
             self.refresh_button_stpf.disabled = False
@@ -2175,7 +2178,7 @@ class AWSApp:
                 # Verificar se é erro de throttling
                 if any(throttle_word in error_msg for throttle_word in ['throttling', 'rate exceeded', 'too many requests', 'requestlimitexceeded']):
                     if attempt == max_retries - 1:  # Última tentativa
-                        print(f"❌ Throttling persistente após {max_retries} tentativas: {e}")
+                        print(f" Throttling persistente após {max_retries} tentativas: {e}")
                         raise
 
                     # Calcular delay com jitter
@@ -2196,7 +2199,7 @@ class AWSApp:
             sfn_client = boto3.client('stepfunctions')
 
             # 1. Buscar lista de todas as state machines primeiro (com retry)
-            print("🔍 Listando Step Functions com proteção anti-throttling...")
+            print(" Listando Step Functions com proteção anti-throttling...")
             all_state_machines = []
 
             def list_state_machines_with_retry():
@@ -2213,15 +2216,15 @@ class AWSApp:
             self.retry_with_backoff(list_state_machines_with_retry, max_retries=3, base_delay=2.0)
 
             if not all_state_machines:
-                print("📋 Nenhuma Step Function encontrada na conta")
+                print(" Nenhuma Step Function encontrada na conta")
                 return []
 
-            print(f"📊 {len(all_state_machines)} Step Functions encontradas")
+            print(f" {len(all_state_machines)} Step Functions encontradas")
 
             # 2. Buscar detalhes em paralelo (otimizado contra throttling)
             state_machines = []
             max_workers = min(5, max(2, len(all_state_machines) // 8))  # Reduzido drasticamente para evitar throttling
-            print(f"🔧 Usando {max_workers} workers para evitar throttling")
+            print(f" Usando {max_workers} workers para evitar throttling")
 
             start_time = time.time()
 
@@ -2255,10 +2258,10 @@ class AWSApp:
 
                         # Verificar se é erro de throttling
                         if any(throttle_word in error_msg for throttle_word in ['throttling', 'rate exceeded', 'too many requests', 'requestlimitexceeded']):
-                            print(f"⚠️  Throttling detectado em Step Function {sm_name}: {e}")
+                            print(f"  Throttling detectado em Step Function {sm_name}: {e}")
                             error_display = "THROTTLING - Tente novamente mais tarde"
                         else:
-                            print(f"❌ Erro ao processar Step Function {sm_name}: {e}")
+                            print(f" Erro ao processar Step Function {sm_name}: {e}")
                             error_display = f"Erro: {str(e)}"
 
                         # Adicionar entrada com erro
@@ -2273,7 +2276,7 @@ class AWSApp:
             end_time = time.time()
             duration = end_time - start_time
 
-            print(f"⚡ Step Functions processadas em {duration:.2f}s com {max_workers} threads (anti-throttling)")
+            print(f" Step Functions processadas em {duration:.2f}s com {max_workers} threads (anti-throttling)")
             print(f"📈 Performance: {len(all_state_machines)/duration:.1f} Step Functions/s - Processo otimizado para evitar erros de API")
 
             return state_machines
@@ -2433,7 +2436,7 @@ class AWSApp:
         """Copia a tabela filtrada de Step Functions para o clipboard"""
         try:
             if not self.filtered_stpf:
-                self.monitoring_status_sptf.value = "❌ Nenhuma Step Function para copiar"
+                self.monitoring_status_sptf.value = " Nenhuma Step Function para copiar"
                 self.monitoring_status_sptf.color = ft.Colors.RED
                 self.page.update()
                 return
@@ -2457,12 +2460,12 @@ class AWSApp:
             clipboard_text = "\n".join(lines)
             pyperclip.copy(clipboard_text)
 
-            self.monitoring_status_sptf.value = f"✅ {len(self.filtered_stpf)} Step Functions copiadas para clipboard"
+            self.monitoring_status_sptf.value = f" {len(self.filtered_stpf)} Step Functions copiadas para clipboard"
             self.monitoring_status_sptf.color = ft.Colors.GREEN
             self.page.update()
 
         except Exception as e:
-            self.monitoring_status_sptf.value = f"❌ Erro ao copiar: {str(e)}"
+            self.monitoring_status_sptf.value = f" Erro ao copiar: {str(e)}"
             self.monitoring_status_sptf.color = ft.Colors.RED
             self.page.update()
 
@@ -2470,13 +2473,13 @@ class AWSApp:
         """Exporta a tabela filtrada de Step Functions para Excel"""
         try:
             if not self.filtered_stpf:
-                self.monitoring_status_sptf.value = "❌ Nenhuma Step Function para exportar"
+                self.monitoring_status_sptf.value = " Nenhuma Step Function para exportar"
                 self.monitoring_status_sptf.color = ft.Colors.RED
                 self.page.update()
                 return
 
             # Mostrar status de escolha de pasta
-            self.monitoring_status_sptf.value = "📁 Escolha onde salvar o arquivo..."
+            self.monitoring_status_sptf.value = " Escolha onde salvar o arquivo..."
             self.monitoring_status_sptf.color = ft.Colors.BLUE
             self.page.update()
 
@@ -2494,7 +2497,7 @@ class AWSApp:
             self.select_export_folder(self._export_stpf_after_folder_selection)
 
         except Exception as e:
-            self.monitoring_status_sptf.value = f"❌ Erro ao preparar export: {str(e)}"
+            self.monitoring_status_sptf.value = f" Erro ao preparar export: {str(e)}"
             self.monitoring_status_sptf.color = ft.Colors.RED
             self.page.update()
 
@@ -2515,12 +2518,12 @@ class AWSApp:
             df.to_excel(file_path, index=False, engine='openpyxl')
 
             # Feedback visual
-            self.monitoring_status_sptf.value = f"✅ Exportado para {file_path.parent.name}/{filename}"
+            self.monitoring_status_sptf.value = f" Exportado para {file_path.parent.name}/{filename}"
             self.monitoring_status_sptf.color = ft.Colors.GREEN
             self.page.update()
 
         except Exception as e:
-            self.monitoring_status_sptf.value = f"❌ Erro ao exportar: {str(e)}"
+            self.monitoring_status_sptf.value = f" Erro ao exportar: {str(e)}"
             self.monitoring_status_sptf.color = ft.Colors.RED
             self.page.update()
 
@@ -2560,7 +2563,7 @@ class AWSApp:
             self.cache_dir.mkdir(parents=True, exist_ok=True)
             return True
         except Exception as e:
-            print(f"❌ Erro ao criar pasta de cache: {e}")
+            print(f" Erro ao criar pasta de cache: {e}")
             return False
 
     def get_glue_cache_filename(self):
@@ -2616,7 +2619,7 @@ class AWSApp:
             return is_fresh
 
         except Exception as e:
-            print(f"❌ Erro ao verificar cache {cache_type}: {e}")
+            print(f" Erro ao verificar cache {cache_type}: {e}")
             return False
 
     def is_cache_fresh_by_data(self, cache_data, minutes_threshold=15):
@@ -2640,7 +2643,7 @@ class AWSApp:
             return is_fresh
 
         except Exception as e:
-            print(f"❌ Erro ao verificar timestamp do cache: {e}")
+            print(f" Erro ao verificar timestamp do cache: {e}")
             return False
 
     def save_glue_cache(self, jobs_data):
@@ -2672,11 +2675,11 @@ class AWSApp:
             with open(cache_file, 'w', encoding='utf-8') as f:
                 json.dump(cache_data, f, indent=2, ensure_ascii=False)
 
-            print(f"💾 Cache Glue salvo: {len(jobs_data)} jobs em {cache_file}")
+            print(f" Cache Glue salvo: {len(jobs_data)} jobs em {cache_file}")
             return True
 
         except Exception as e:
-            print(f"❌ Erro ao salvar cache Glue: {e}")
+            print(f" Erro ao salvar cache Glue: {e}")
             return False
 
     def load_glue_cache(self):
@@ -2692,7 +2695,7 @@ class AWSApp:
             # Verificar se o cache é para a conta/profile atual
             if (cache_data.get("account_id") != self.current_account_id or
                 cache_data.get("profile") != self.current_profile):
-                print("🔄 Cache Glue é de outra conta/profile, ignorando...")
+                print(" Cache Glue é de outra conta/profile, ignorando...")
                 return None
 
             # Converter datetime strings de volta
@@ -2706,11 +2709,11 @@ class AWSApp:
                 jobs.append(job)
 
             cache_timestamp = cache_data.get("timestamp", "")
-            print(f"📁 Cache Glue carregado: {len(jobs)} jobs (salvo em {cache_timestamp})")
+            print(f" Cache Glue carregado: {len(jobs)} jobs (salvo em {cache_timestamp})")
             return jobs
 
         except Exception as e:
-            print(f"❌ Erro ao carregar cache Glue: {e}")
+            print(f" Erro ao carregar cache Glue: {e}")
             return None
 
     def save_stpf_cache(self, stpf_data):
@@ -2742,11 +2745,11 @@ class AWSApp:
             with open(cache_file, 'w', encoding='utf-8') as f:
                 json.dump(cache_data, f, indent=2, ensure_ascii=False)
 
-            print(f"💾 Cache STP salvo: {len(stpf_data)} Step Functions em {cache_file}")
+            print(f" Cache STP salvo: {len(stpf_data)} Step Functions em {cache_file}")
             return True
 
         except Exception as e:
-            print(f"❌ Erro ao salvar cache STP: {e}")
+            print(f" Erro ao salvar cache STP: {e}")
             return False
 
     def load_stpf_cache(self):
@@ -2762,7 +2765,7 @@ class AWSApp:
             # Verificar se o cache é para a conta/profile atual
             if (cache_data.get("account_id") != self.current_account_id or
                 cache_data.get("profile") != self.current_profile):
-                print("🔄 Cache STP é de outra conta/profile, ignorando...")
+                print(" Cache STP é de outra conta/profile, ignorando...")
                 return None
 
             # Converter datetime strings de volta
@@ -2776,11 +2779,11 @@ class AWSApp:
                 stpf_list.append(stpf)
 
             cache_timestamp = cache_data.get("timestamp", "")
-            print(f"📁 Cache STP carregado: {len(stpf_list)} Step Functions (salvo em {cache_timestamp})")
+            print(f" Cache STP carregado: {len(stpf_list)} Step Functions (salvo em {cache_timestamp})")
             return stpf_list
 
         except Exception as e:
-            print(f"❌ Erro ao carregar cache STP: {e}")
+            print(f" Erro ao carregar cache STP: {e}")
             return None
 
     def get_tables_cache_filename(self):
@@ -2809,11 +2812,11 @@ class AWSApp:
             with open(cache_file, 'w', encoding='utf-8') as f:
                 json.dump(cache_data, f, indent=2, ensure_ascii=False)
 
-            print(f"💾 Cache Tables salvo: {len(tables_data)} tabelas em {cache_file}")
+            print(f" Cache Tables salvo: {len(tables_data)} tabelas em {cache_file}")
             return True
 
         except Exception as e:
-            print(f"❌ Erro ao salvar cache Tables: {e}")
+            print(f" Erro ao salvar cache Tables: {e}")
             return False
 
     def load_tables_cache(self):
@@ -2829,21 +2832,21 @@ class AWSApp:
             # Verificar se o cache é para a conta/profile atual
             if (cache_data.get("account_id") != self.current_account_id or
                 cache_data.get("profile") != self.current_profile):
-                print("🔄 Cache Tables é de outra conta/profile, ignorando...")
+                print(" Cache Tables é de outra conta/profile, ignorando...")
                 return None
 
             # Verificar se o cache não está muito antigo (15 minutos)
             if not self.is_cache_fresh_by_data(cache_data, minutes_threshold=15):
-                print("⏰ Cache Tables está muito antigo (>15 min), ignorando...")
+                print(" Cache Tables está muito antigo (>15 min), ignorando...")
                 return None
 
             tables_list = cache_data.get("tables", [])
             cache_timestamp = cache_data.get("timestamp", "")
-            print(f"📁 Cache Tables carregado: {len(tables_list)} tabelas (salvo em {cache_timestamp})")
+            print(f" Cache Tables carregado: {len(tables_list)} tabelas (salvo em {cache_timestamp})")
             return tables_list
 
         except Exception as e:
-            print(f"❌ Erro ao carregar cache Tables: {e}")
+            print(f" Erro ao carregar cache Tables: {e}")
             return None
 
     def get_eventbridge_cache_filename(self):
@@ -2872,11 +2875,11 @@ class AWSApp:
             with open(cache_file, 'w', encoding='utf-8') as f:
                 json.dump(cache_data, f, indent=2, ensure_ascii=False)
 
-            print(f"💾 Cache EventBridge salvo: {len(rules_data)} regras em {cache_file}")
+            print(f" Cache EventBridge salvo: {len(rules_data)} regras em {cache_file}")
             return True
 
         except Exception as e:
-            print(f"❌ Erro ao salvar cache EventBridge: {e}")
+            print(f" Erro ao salvar cache EventBridge: {e}")
             return False
 
     def load_eventbridge_cache(self):
@@ -2892,21 +2895,21 @@ class AWSApp:
             # Verificar se o cache é para a conta/profile atual
             if (cache_data.get("account_id") != self.current_account_id or
                 cache_data.get("profile") != self.current_profile):
-                print("🔄 Cache EventBridge é de outra conta/profile, ignorando...")
+                print(" Cache EventBridge é de outra conta/profile, ignorando...")
                 return None
 
             # Verificar se o cache não está muito antigo (15 minutos)
             if not self.is_cache_fresh_by_data(cache_data, minutes_threshold=15):
-                print("⏰ Cache EventBridge está muito antigo (>15 min), ignorando...")
+                print(" Cache EventBridge está muito antigo (>15 min), ignorando...")
                 return None
 
             rules_list = cache_data.get("rules", [])
             cache_timestamp = cache_data.get("timestamp", "")
-            print(f"📁 Cache EventBridge carregado: {len(rules_list)} regras (salvo em {cache_timestamp})")
+            print(f" Cache EventBridge carregado: {len(rules_list)} regras (salvo em {cache_timestamp})")
             return rules_list
 
         except Exception as e:
-            print(f"❌ Erro ao carregar cache EventBridge: {e}")
+            print(f" Erro ao carregar cache EventBridge: {e}")
             return None
 
     def check_and_load_cache_on_tab_open(self, tab_type):
@@ -2921,20 +2924,20 @@ class AWSApp:
                 # Cache encontrado - carregar sempre
                 self.all_jobs = cached_jobs
                 self.filter_jobs()
-                self.monitoring_status.value = f"📁 {len(cached_jobs)} jobs carregados do cache"
+                self.monitoring_status.value = f" {len(cached_jobs)} jobs carregados do cache"
                 self.monitoring_status.color = ft.Colors.BLUE
                 self.last_update_text.value = f"Cache carregado: {datetime.now().strftime('%H:%M:%S')}"
                 self.page.update()
 
                 # Verificar se deve atualizar automaticamente
                 if hasattr(self, 'auto_refresh_enabled') and self.auto_refresh_enabled.value:
-                    print("🔄 Auto-refresh ativo - Atualizando dados do Glue...")
+                    print(" Auto-refresh ativo - Atualizando dados do Glue...")
                     self.refresh_jobs()
                 else:
-                    print("📁 Cache carregado - Auto-refresh inativo, use o botão Atualizar se necessário")
+                    print(" Cache carregado - Auto-refresh inativo, use o botão Atualizar se necessário")
             else:
                 # Não tem cache, carregar dados automaticamente
-                print("🔄 Cache Glue não encontrado, carregando dados...")
+                print(" Cache Glue não encontrado, carregando dados...")
                 self.refresh_jobs()
 
         elif tab_type == "stpf":
@@ -2944,20 +2947,20 @@ class AWSApp:
                 # Cache encontrado - carregar sempre
                 self.all_stpf = cached_stpf
                 self.filter_stpf_jobs()
-                self.monitoring_status_sptf.value = f"📁 {len(cached_stpf)} Step Functions carregadas do cache"
+                self.monitoring_status_sptf.value = f" {len(cached_stpf)} Step Functions carregadas do cache"
                 self.monitoring_status_sptf.color = ft.Colors.BLUE
                 self.last_update_text_stpf.value = f"Cache carregado: {datetime.now().strftime('%H:%M:%S')}"
                 self.page.update()
 
                 # Verificar se deve atualizar automaticamente
                 if hasattr(self, 'auto_refresh_enabled_stpf') and self.auto_refresh_enabled_stpf.value:
-                    print("🔄 Auto-refresh ativo - Atualizando dados do Step Functions...")
+                    print(" Auto-refresh ativo - Atualizando dados do Step Functions...")
                     self.refresh_stpf_jobs()
                 else:
-                    print("📁 Cache carregado - Auto-refresh inativo, use o botão Atualizar se necessário")
+                    print(" Cache carregado - Auto-refresh inativo, use o botão Atualizar se necessário")
             else:
                 # Não tem cache, carregar dados automaticamente
-                print("🔄 Cache Step Functions não encontrado, carregando dados...")
+                print(" Cache Step Functions não encontrado, carregando dados...")
                 self.refresh_stpf_jobs()
 
         elif tab_type == "tables":
@@ -2967,13 +2970,13 @@ class AWSApp:
                 # Cache encontrado - só carregar cache (Tables não tem auto-refresh)
                 self.all_tables = cached_tables
                 self.filter_tables()
-                self.monitoring_status_tables.value = f"📁 {len(cached_tables)} tabelas carregadas do cache"
+                self.monitoring_status_tables.value = f" {len(cached_tables)} tabelas carregadas do cache"
                 self.monitoring_status_tables.color = ft.Colors.BLUE
                 self.page.update()
-                print("📁 Cache Tables carregado - Use o botão Atualizar para buscar dados atualizados")
+                print(" Cache Tables carregado - Use o botão Atualizar para buscar dados atualizados")
             else:
                 # Não tem cache, carregar dados automaticamente
-                print("🔄 Cache Tables não encontrado, carregando dados...")
+                print(" Cache Tables não encontrado, carregando dados...")
                 self.refresh_tables()
 
         elif tab_type == "eventbridge":
@@ -2983,20 +2986,20 @@ class AWSApp:
                 # Cache encontrado - só carregar cache (EventBridge não tem auto-refresh)
                 self.all_eventbridge_rules = cached_rules
                 self.filter_eventbridge_rules()
-                self.monitoring_status_eventbridge.value = f"📁 {len(cached_rules)} regras EventBridge carregadas do cache"
+                self.monitoring_status_eventbridge.value = f" {len(cached_rules)} regras EventBridge carregadas do cache"
                 self.monitoring_status_eventbridge.color = ft.Colors.BLUE
                 self.page.update()
-                print("📁 Cache EventBridge carregado - Use o botão Atualizar para buscar dados atualizados")
+                print(" Cache EventBridge carregado - Use o botão Atualizar para buscar dados atualizados")
             else:
                 # Não tem cache, carregar dados automaticamente
-                print("🔄 Cache EventBridge não encontrado, carregando dados...")
+                print(" Cache EventBridge não encontrado, carregando dados...")
                 self.refresh_eventbridge_rules()
 
     def copy_jobs_to_clipboard(self, e):
         """Copia a tabela filtrada de jobs Glue para o clipboard"""
         try:
             if not self.filtered_jobs:
-                self.monitoring_status.value = "❌ Nenhum job para copiar"
+                self.monitoring_status.value = " Nenhum job para copiar"
                 self.monitoring_status.color = ft.Colors.RED
                 self.page.update()
                 return
@@ -3020,12 +3023,12 @@ class AWSApp:
             clipboard_text = "\n".join(lines)
             pyperclip.copy(clipboard_text)
 
-            self.monitoring_status.value = f"✅ {len(self.filtered_jobs)} jobs copiados para clipboard"
+            self.monitoring_status.value = f" {len(self.filtered_jobs)} jobs copiados para clipboard"
             self.monitoring_status.color = ft.Colors.GREEN
             self.page.update()
 
         except Exception as e:
-            self.monitoring_status.value = f"❌ Erro ao copiar: {str(e)}"
+            self.monitoring_status.value = f" Erro ao copiar: {str(e)}"
             self.monitoring_status.color = ft.Colors.RED
             self.page.update()
 
@@ -3033,13 +3036,13 @@ class AWSApp:
         """Exporta a tabela filtrada de jobs Glue para Excel"""
         try:
             if not self.filtered_jobs:
-                self.monitoring_status.value = "❌ Nenhum job para exportar"
+                self.monitoring_status.value = " Nenhum job para exportar"
                 self.monitoring_status.color = ft.Colors.RED
                 self.page.update()
                 return
 
             # Mostrar status de escolha de pasta
-            self.monitoring_status.value = "📁 Escolha onde salvar o arquivo..."
+            self.monitoring_status.value = " Escolha onde salvar o arquivo..."
             self.monitoring_status.color = ft.Colors.BLUE
             self.page.update()
 
@@ -3057,7 +3060,7 @@ class AWSApp:
             self.select_export_folder(self._export_jobs_after_folder_selection)
 
         except Exception as e:
-            self.monitoring_status.value = f"❌ Erro ao preparar export: {str(e)}"
+            self.monitoring_status.value = f" Erro ao preparar export: {str(e)}"
             self.monitoring_status.color = ft.Colors.RED
             self.page.update()
 
@@ -3078,21 +3081,21 @@ class AWSApp:
             df.to_excel(file_path, index=False, engine='openpyxl')
 
             # Feedback visual
-            self.monitoring_status.value = f"✅ Exportado para {file_path.parent.name}/{filename}"
+            self.monitoring_status.value = f" Exportado para {file_path.parent.name}/{filename}"
             self.monitoring_status.color = ft.Colors.GREEN
             self.page.update()
 
             # Reset status após 5 segundos
             def reset_status():
                 time.sleep(5)
-                self.monitoring_status.value = f"✅ {len(self.export_data_jobs)} jobs Glue encontrados"
+                self.monitoring_status.value = f" {len(self.export_data_jobs)} jobs Glue encontrados"
                 self.monitoring_status.color = ft.Colors.GREEN
                 self.page.update()
 
             threading.Thread(target=reset_status, daemon=True).start()
 
         except Exception as e:
-            self.monitoring_status.value = f"❌ Erro ao exportar: {str(e)}"
+            self.monitoring_status.value = f" Erro ao exportar: {str(e)}"
             self.monitoring_status.color = ft.Colors.RED
             self.page.update()
 
@@ -3222,20 +3225,20 @@ class AWSApp:
                 # Abrir no explorador de arquivos do Windows
                 os.startfile(str(local_path))
 
-                self.s3_status.value = f"📁 Pasta aberta: {local_path}"
+                self.s3_status.value = f" Pasta aberta: {local_path}"
                 self.s3_status.color = ft.Colors.BLUE
             else:
-                self.s3_status.value = "❌ Selecione todas as opções necessárias primeiro"
+                self.s3_status.value = " Selecione todas as opções necessárias primeiro"
                 self.s3_status.color = ft.Colors.RED
         except Exception as e:
-            self.s3_status.value = f"❌ Erro ao abrir pasta: {str(e)}"
+            self.s3_status.value = f" Erro ao abrir pasta: {str(e)}"
             self.s3_status.color = ft.Colors.RED
 
         self.page.update()
 
     def sync_to_s3(self, e):
         self.s3_progress.visible = True
-        self.s3_status.value = "🔄 Sincronizando para S3..."
+        self.s3_status.value = " Sincronizando para S3..."
         self.s3_status.color = ft.Colors.ORANGE
         self.sync_to_s3_button.disabled = True
         self.page.update()
@@ -3253,15 +3256,15 @@ class AWSApp:
                 s3_path
             ], capture_output=True, text=True, check=True)
 
-            self.s3_status.value = f"✅ Sincronização concluída: Local → S3"
+            self.s3_status.value = f" Sincronização concluída: Local → S3"
             self.s3_status.color = ft.Colors.GREEN
 
         except subprocess.CalledProcessError as e:
-            self.s3_status.value = f"❌ Erro na sincronização: {e.stderr or e.stdout}"
+            self.s3_status.value = f" Erro na sincronização: {e.stderr or e.stdout}"
             self.s3_status.color = ft.Colors.RED
 
         except Exception as e:
-            self.s3_status.value = f"❌ Erro: {str(e)}"
+            self.s3_status.value = f" Erro: {str(e)}"
             self.s3_status.color = ft.Colors.RED
 
         self.s3_progress.visible = False
@@ -3270,7 +3273,7 @@ class AWSApp:
 
     def sync_from_s3(self, e):
         self.s3_progress.visible = True
-        self.s3_status.value = "🔄 Sincronizando do S3..."
+        self.s3_status.value = " Sincronizando do S3..."
         self.s3_status.color = ft.Colors.ORANGE
         self.sync_from_s3_button.disabled = True
         self.page.update()
@@ -3296,15 +3299,15 @@ class AWSApp:
             result = subprocess.run(sync_command, capture_output=True, text=True, check=True)
 
             delete_suffix = " (com --delete)" if self.delete_checkbox.value else ""
-            self.s3_status.value = f"✅ Sincronização concluída: S3 → Local{delete_suffix}"
+            self.s3_status.value = f" Sincronização concluída: S3 → Local{delete_suffix}"
             self.s3_status.color = ft.Colors.GREEN
 
         except subprocess.CalledProcessError as e:
-            self.s3_status.value = f"❌ Erro na sincronização: {e.stderr or e.stdout}"
+            self.s3_status.value = f" Erro na sincronização: {e.stderr or e.stdout}"
             self.s3_status.color = ft.Colors.RED
 
         except Exception as e:
-            self.s3_status.value = f"❌ Erro: {str(e)}"
+            self.s3_status.value = f" Erro: {str(e)}"
             self.s3_status.color = ft.Colors.RED
 
         self.s3_progress.visible = False
@@ -3316,7 +3319,7 @@ class AWSApp:
         is_logged = self.refresh_aws_status()
 
         if is_logged:
-            self.status_text.value = f"✅ Logado como: {self.current_user_arn}"
+            self.status_text.value = f" Logado como: {self.current_user_arn}"
             self.status_text.color = ft.Colors.GREEN
             self.login_button.visible = False
             self.logout_button.visible = True
@@ -3324,7 +3327,7 @@ class AWSApp:
             # Limpar lista de profiles quando logado
             self.profile_list.controls.clear()
         else:
-            self.status_text.value = "❌ Não logado - Selecione um profile SSO"
+            self.status_text.value = " Não logado - Selecione um profile SSO"
             self.status_text.color = ft.Colors.RED
             self.login_button.visible = True
             self.login_button.text = "Login"
@@ -3349,7 +3352,7 @@ class AWSApp:
                     break
 
             if not aws_config_path:
-                self.status_text.value = f"❌ Arquivo config não encontrado em {aws_dir}"
+                self.status_text.value = f" Arquivo config não encontrado em {aws_dir}"
                 self.page.update()
                 return
 
@@ -3366,11 +3369,11 @@ class AWSApp:
                     all_profiles.append(profile_name)
 
             if not all_profiles:
-                self.status_text.value = f"❌ Nenhum profile encontrado em {aws_config_path.name}"
+                self.status_text.value = f" Nenhum profile encontrado em {aws_config_path.name}"
                 self.page.update()
                 return
 
-            self.status_text.value = f"✅ Encontrados {len(all_profiles)} profiles em {aws_config_path.name}"
+            self.status_text.value = f" Encontrados {len(all_profiles)} profiles em {aws_config_path.name}"
             self.status_text.color = ft.Colors.BLUE
 
             self.selected_profiles = set()
@@ -3387,7 +3390,7 @@ class AWSApp:
             self.page.update()
 
         except Exception as e:
-            self.status_text.value = f"❌ Erro ao carregar profiles: {str(e)}"
+            self.status_text.value = f" Erro ao carregar profiles: {str(e)}"
             self.page.update()
 
     def on_profile_select(self, e, profile_name):
@@ -3409,7 +3412,7 @@ class AWSApp:
         profile = list(self.selected_profiles)[0]
         self.progress_ring.visible = True
         self.login_button.disabled = True
-        self.status_text.value = f"🔄 Fazendo login no profile: {profile}"
+        self.status_text.value = f" Fazendo login no profile: {profile}"
         self.status_text.color = ft.Colors.ORANGE
         self.page.update()
 
@@ -3421,7 +3424,7 @@ class AWSApp:
 
             success = False
             if result.returncode == 0:
-                self.status_text.value = f"✅ Login SSO realizado com sucesso no profile: {profile}"
+                self.status_text.value = f" Login SSO realizado com sucesso no profile: {profile}"
                 self.status_text.color = ft.Colors.GREEN
                 success = True
             else:
@@ -3433,11 +3436,11 @@ class AWSApp:
                 ], capture_output=True, text=True, check=False)
 
                 if test_result.returncode == 0:
-                    self.status_text.value = f"✅ Profile configurado: {profile}"
+                    self.status_text.value = f" Profile configurado: {profile}"
                     self.status_text.color = ft.Colors.GREEN
                     success = True
                 else:
-                    self.status_text.value = f"❌ Erro no profile: {result.stderr or result.stdout}"
+                    self.status_text.value = f" Erro no profile: {result.stderr or result.stdout}"
                     self.status_text.color = ft.Colors.RED
                     self.login_button.disabled = False
 
@@ -3447,7 +3450,7 @@ class AWSApp:
                 self.check_login_status()
 
         except FileNotFoundError:
-            self.status_text.value = "❌ AWS CLI não encontrado. Instale o AWS CLI primeiro."
+            self.status_text.value = " AWS CLI não encontrado. Instale o AWS CLI primeiro."
             self.status_text.color = ft.Colors.RED
             self.login_button.disabled = False
 
@@ -3461,7 +3464,7 @@ class AWSApp:
         """Função para fazer logout do profile atual"""
         self.progress_ring.visible = True
         self.logout_button.disabled = True
-        self.status_text.value = "🔄 Fazendo logout..."
+        self.status_text.value = " Fazendo logout..."
         self.status_text.color = ft.Colors.ORANGE
         self.page.update()
 
@@ -3495,7 +3498,7 @@ class AWSApp:
                 self.filtered_jobs = []
 
             # Forçar estado de logout na interface
-            self.status_text.value = "❌ Não logado - Selecione um profile SSO"
+            self.status_text.value = " Não logado - Selecione um profile SSO"
             self.status_text.color = ft.Colors.RED
             self.login_button.visible = True
             self.login_button.text = "Login"
@@ -3519,7 +3522,7 @@ class AWSApp:
             # Mostrar mensagem de sucesso temporariamente
             temp_status = self.status_text.value
             temp_color = self.status_text.color
-            self.status_text.value = "✅ Logout realizado com sucesso"
+            self.status_text.value = " Logout realizado com sucesso"
             self.status_text.color = ft.Colors.GREEN
             self.page.update()
 
@@ -3535,7 +3538,7 @@ class AWSApp:
             timer.start()
 
         except Exception as e:
-            self.status_text.value = f"❌ Erro no logout: {str(e)}"
+            self.status_text.value = f" Erro no logout: {str(e)}"
             self.status_text.color = ft.Colors.RED
 
         self.progress_ring.visible = False
@@ -3596,7 +3599,7 @@ class AWSApp:
             }
 
         except Exception as e:
-            print(f"❌ Erro ao buscar metadados da tabela {table_name}: {e}")
+            print(f" Erro ao buscar metadados da tabela {table_name}: {e}")
             return {
                 "name": table_name,
                 "database": database,
@@ -3646,23 +3649,23 @@ class AWSApp:
                     if object_count >= 50:
                         break
 
-                print(f"📊 S3: Verificados {object_count} objetos em {s3_location[:50]}...")
+                print(f" S3: Verificados {object_count} objetos em {s3_location[:50]}...")
                 return latest_date
 
             return self.retry_with_backoff(list_s3_objects, max_retries=2, base_delay=0.5)
 
         except Exception as e:
-            print(f"⚠️  Erro ao buscar data dos arquivos S3 em {s3_location}: {e}")
+            print(f"  Erro ao buscar data dos arquivos S3 em {s3_location}: {e}")
             return None
 
     def fetch_all_tables(self, databases=["itau", "teste"], max_workers=3):
         """Busca tabelas dos databases especificados usando boto3 e threads otimizadas."""
         try:
             if not self.current_account_id:
-                print("❌ Necessário estar logado para buscar tabelas")
+                print(" Necessário estar logado para buscar tabelas")
                 return []
 
-            print(f"🔍 Buscando tabelas nos databases: {databases}")
+            print(f" Buscando tabelas nos databases: {databases}")
             all_table_names = []
 
             # 1. Primeiro, listar todas as tabelas por database (com throttling protection)
@@ -3686,13 +3689,13 @@ class AWSApp:
 
                     tables_in_db = self.retry_with_backoff(list_tables_in_db, max_retries=3, base_delay=1.0)
                     all_table_names.extend(tables_in_db)
-                    print(f"📊 Database '{database}': {len(tables_in_db)} tabelas encontradas")
+                    print(f" Database '{database}': {len(tables_in_db)} tabelas encontradas")
 
                 except Exception as e:
-                    print(f"❌ Erro ao listar tabelas no database {database}: {e}")
+                    print(f" Erro ao listar tabelas no database {database}: {e}")
 
             if not all_table_names:
-                print("📋 Nenhuma tabela encontrada nos databases especificados")
+                print(" Nenhuma tabela encontrada nos databases especificados")
                 return []
 
             print(f"📈 Total: {len(all_table_names)} tabelas para processar")
@@ -3701,7 +3704,7 @@ class AWSApp:
             tables_metadata = []
             # Reduzir workers para evitar throttling em operações de metadados + S3
             actual_workers = min(max_workers, max(2, len(all_table_names) // 10))
-            print(f"🔧 Usando {actual_workers} workers (otimizado para evitar throttling)")
+            print(f" Usando {actual_workers} workers (otimizado para evitar throttling)")
 
             start_time = time.time()
 
@@ -3731,7 +3734,7 @@ class AWSApp:
 
                     except Exception as e:
                         table_name = future_to_table[future]
-                        print(f"❌ Erro ao processar tabela {table_name}: {e}")
+                        print(f" Erro ao processar tabela {table_name}: {e}")
                         # Adicionar entrada com erro
                         db_name, tbl_name = table_name.split('.', 1)
                         tables_metadata.append({
@@ -3747,13 +3750,13 @@ class AWSApp:
 
             end_time = time.time()
             duration = end_time - start_time
-            print(f"⚡ Tabelas processadas em {duration:.2f}s com {actual_workers} workers")
-            print(f"📊 Performance: {len(all_table_names)/duration:.1f} tabelas/s")
+            print(f" Tabelas processadas em {duration:.2f}s com {actual_workers} workers")
+            print(f" Performance: {len(all_table_names)/duration:.1f} tabelas/s")
 
             return tables_metadata
 
         except Exception as e:
-            print(f"❌ Erro geral ao buscar tabelas: {e}")
+            print(f" Erro geral ao buscar tabelas: {e}")
             return []
 
     def update_tables_table(self, tables_data=None):
@@ -3794,7 +3797,7 @@ class AWSApp:
 
         # Verificar se cache é recente (menos de 15 minutos)
         if self.is_cache_fresh("tables", 15):
-            self.monitoring_status_tables.value = "⏰ Cache recente (menos de 15 min) - Use o cache existente para evitar custos adicionais"
+            self.monitoring_status_tables.value = " Cache recente (menos de 15 min) - Use o cache existente para evitar custos adicionais"
             self.monitoring_status_tables.color = ft.Colors.BLUE
             self.page.update()
             return
@@ -3817,7 +3820,7 @@ class AWSApp:
                     # Salvar no cache
                     self.save_tables_cache(tables)
 
-                    self.monitoring_status_tables.value = f"✅ {len(tables)} tabelas encontradas"
+                    self.monitoring_status_tables.value = f" {len(tables)} tabelas encontradas"
                     self.monitoring_status_tables.color = ft.Colors.GREEN
                     self.monitoring_progress_tables.visible = False
                     self.refresh_button_tables.disabled = False
@@ -3828,7 +3831,7 @@ class AWSApp:
 
             except Exception as e:
                 def update_ui_error():
-                    self.monitoring_status_tables.value = f"❌ Erro ao carregar tabelas: {str(e)}"
+                    self.monitoring_status_tables.value = f" Erro ao carregar tabelas: {str(e)}"
                     self.monitoring_status_tables.color = ft.Colors.RED
                     self.monitoring_progress_tables.visible = False
                     self.refresh_button_tables.disabled = False
@@ -3850,7 +3853,7 @@ class AWSApp:
 
         # Botão de atualização manual
         self.refresh_button_tables = ft.ElevatedButton(
-            "🔄 Atualizar",
+            " Atualizar",
             on_click=self.refresh_tables,
             width=130,
             height=40,
@@ -4031,21 +4034,21 @@ class AWSApp:
             pyperclip.copy(clipboard_text)
 
             # Feedback visual
-            self.monitoring_status_tables.value = "✅ Dados copiados para clipboard"
+            self.monitoring_status_tables.value = " Dados copiados para clipboard"
             self.monitoring_status_tables.color = ft.Colors.GREEN
             self.page.update()
 
             # Reset status após 3 segundos
             def reset_status():
                 time.sleep(3)
-                self.monitoring_status_tables.value = f"✅ {len(data)} tabelas encontradas"
+                self.monitoring_status_tables.value = f" {len(data)} tabelas encontradas"
                 self.monitoring_status_tables.color = ft.Colors.GREEN
                 self.page.update()
 
             threading.Thread(target=reset_status, daemon=True).start()
 
         except Exception as e:
-            self.monitoring_status_tables.value = f"❌ Erro ao copiar: {str(e)}"
+            self.monitoring_status_tables.value = f" Erro ao copiar: {str(e)}"
             self.monitoring_status_tables.color = ft.Colors.RED
             self.page.update()
 
@@ -4056,7 +4059,7 @@ class AWSApp:
                 return
 
             # Mostrar status de escolha de pasta
-            self.monitoring_status_tables.value = "📁 Escolha onde salvar o arquivo..."
+            self.monitoring_status_tables.value = " Escolha onde salvar o arquivo..."
             self.monitoring_status_tables.color = ft.Colors.BLUE
             self.page.update()
 
@@ -4072,7 +4075,7 @@ class AWSApp:
             self.select_export_folder(self._export_tables_after_folder_selection)
 
         except Exception as e:
-            self.monitoring_status_tables.value = f"❌ Erro ao preparar export: {str(e)}"
+            self.monitoring_status_tables.value = f" Erro ao preparar export: {str(e)}"
             self.monitoring_status_tables.color = ft.Colors.RED
             self.page.update()
 
@@ -4093,21 +4096,21 @@ class AWSApp:
             df.to_excel(file_path, index=False, engine='openpyxl')
 
             # Feedback visual
-            self.monitoring_status_tables.value = f"✅ Exportado para {file_path.parent.name}/{filename}"
+            self.monitoring_status_tables.value = f" Exportado para {file_path.parent.name}/{filename}"
             self.monitoring_status_tables.color = ft.Colors.GREEN
             self.page.update()
 
             # Reset status após 5 segundos
             def reset_status():
                 time.sleep(5)
-                self.monitoring_status_tables.value = f"✅ {len(self.export_data_tables)} tabelas encontradas"
+                self.monitoring_status_tables.value = f" {len(self.export_data_tables)} tabelas encontradas"
                 self.monitoring_status_tables.color = ft.Colors.GREEN
                 self.page.update()
 
             threading.Thread(target=reset_status, daemon=True).start()
 
         except Exception as e:
-            self.monitoring_status_tables.value = f"❌ Erro ao exportar: {str(e)}"
+            self.monitoring_status_tables.value = f" Erro ao exportar: {str(e)}"
             self.monitoring_status_tables.color = ft.Colors.RED
             self.page.update()
 
@@ -4122,7 +4125,7 @@ class AWSApp:
 
         # Botão de atualização manual
         self.refresh_button_eventbridge = ft.ElevatedButton(
-            "🔄 Atualizar",
+            " Atualizar",
             on_click=self.refresh_eventbridge_rules,
             width=130,
             height=40,
@@ -4299,7 +4302,7 @@ class AWSApp:
 
         # Botão de atualização
         self.refresh_button_athena = ft.ElevatedButton(
-            "📊 Gerar Relatório",
+            " Gerar Relatório",
             on_click=self.refresh_athena_costs,
             width=150,
             height=40,
@@ -4311,7 +4314,7 @@ class AWSApp:
 
         # Botão para carregar workgroups
         self.load_workgroups_button = ft.ElevatedButton(
-            "🔄 Carregar Workgroups",
+            " Carregar Workgroups",
             on_click=self.load_athena_workgroups,
             width=160,
             height=40,
@@ -4469,7 +4472,7 @@ class AWSApp:
     def load_athena_workgroups(self, e):
         """Carrega lista de workgroups do Athena"""
         try:
-            self.athena_status.value = "🔄 Carregando workgroups..."
+            self.athena_status.value = " Carregando workgroups..."
             self.athena_status.color = ft.Colors.ORANGE
             self.athena_progress.visible = True
             self.page.update()
@@ -4491,7 +4494,7 @@ class AWSApp:
                                 ft.dropdown.Option(wg['Name'], wg['Name'])
                             )
 
-                        self.athena_status.value = f"✅ {len(workgroups)} workgroups encontrados"
+                        self.athena_status.value = f" {len(workgroups)} workgroups encontrados"
                         self.athena_status.color = ft.Colors.GREEN
                         self.athena_progress.visible = False
                         self.page.update()
@@ -4500,7 +4503,7 @@ class AWSApp:
 
                 except Exception as e:
                     def update_error():
-                        self.athena_status.value = f"❌ Erro ao carregar workgroups: {str(e)}"
+                        self.athena_status.value = f" Erro ao carregar workgroups: {str(e)}"
                         self.athena_status.color = ft.Colors.RED
                         self.athena_progress.visible = False
                         self.page.update()
@@ -4510,7 +4513,7 @@ class AWSApp:
             threading.Thread(target=load_in_background, daemon=True).start()
 
         except Exception as e:
-            self.athena_status.value = f"❌ Erro ao iniciar carregamento: {str(e)}"
+            self.athena_status.value = f" Erro ao iniciar carregamento: {str(e)}"
             self.athena_status.color = ft.Colors.RED
             self.athena_progress.visible = False
             self.page.update()
@@ -4518,7 +4521,7 @@ class AWSApp:
     def refresh_athena_costs(self, e):
         """Gera relatório de custos do Athena"""
         try:
-            self.athena_status.value = "📊 Gerando relatório de custos..."
+            self.athena_status.value = " Gerando relatório de custos..."
             self.athena_status.color = ft.Colors.ORANGE
             self.athena_progress.visible = True
             self.page.update()
@@ -4541,7 +4544,7 @@ class AWSApp:
                         # Gerar gráficos
                         self.generate_athena_charts(cost_data, period)
 
-                        self.athena_status.value = f"✅ Relatório gerado com {len(cost_data)} registros"
+                        self.athena_status.value = f" Relatório gerado com {len(cost_data)} registros"
                         self.athena_status.color = ft.Colors.GREEN
                         self.athena_progress.visible = False
                         self.page.update()
@@ -4550,7 +4553,7 @@ class AWSApp:
 
                 except Exception as e:
                     def update_error():
-                        self.athena_status.value = f"❌ Erro ao gerar relatório: {str(e)}"
+                        self.athena_status.value = f" Erro ao gerar relatório: {str(e)}"
                         self.athena_status.color = ft.Colors.RED
                         self.athena_progress.visible = False
                         self.page.update()
@@ -4560,7 +4563,7 @@ class AWSApp:
             threading.Thread(target=generate_in_background, daemon=True).start()
 
         except Exception as e:
-            self.athena_status.value = f"❌ Erro ao iniciar geração: {str(e)}"
+            self.athena_status.value = f" Erro ao iniciar geração: {str(e)}"
             self.athena_status.color = ft.Colors.RED
             self.athena_progress.visible = False
             self.page.update()
@@ -4569,10 +4572,10 @@ class AWSApp:
         """Busca todos os workgroups do Athena"""
         try:
             if not self.current_account_id:
-                print("❌ Necessário estar logado para buscar workgroups")
+                print(" Necessário estar logado para buscar workgroups")
                 return []
 
-            print("🔍 Buscando workgroups do Athena...")
+            print(" Buscando workgroups do Athena...")
             athena_client = boto3.client('athena')
 
             def get_workgroups():
@@ -4584,18 +4587,18 @@ class AWSApp:
                 return workgroups
 
             workgroups = self.retry_with_backoff(get_workgroups, max_retries=3, base_delay=0.5)
-            print(f"✅ {len(workgroups)} workgroups encontrados")
+            print(f" {len(workgroups)} workgroups encontrados")
             return workgroups
 
         except Exception as e:
-            print(f"❌ Erro ao buscar workgroups: {e}")
+            print(f" Erro ao buscar workgroups: {e}")
             return []
 
     def fetch_athena_costs(self, period, workgroup, start_date, end_date):
         """Busca dados de custos do Athena via Cost Explorer"""
         try:
             if not self.current_account_id:
-                print("❌ Necessário estar logado para buscar custos")
+                print(" Necessário estar logado para buscar custos")
                 return []
 
             print(f"💰 Buscando custos do Athena ({period}) de {start_date} a {end_date}...")
@@ -4666,11 +4669,11 @@ class AWSApp:
             if not cost_data:
                 cost_data = self.generate_sample_athena_data(period, workgroup, start_date, end_date)
 
-            print(f"✅ {len(cost_data)} registros de custo encontrados")
+            print(f" {len(cost_data)} registros de custo encontrados")
             return cost_data
 
         except Exception as e:
-            print(f"❌ Erro ao buscar custos: {e}")
+            print(f" Erro ao buscar custos: {e}")
             # Retornar dados simulados em caso de erro
             return self.generate_sample_athena_data(period, workgroup, start_date, end_date)
 
@@ -4741,7 +4744,7 @@ class AWSApp:
             return sample_data
 
         except Exception as e:
-            print(f"❌ Erro ao gerar dados simulados: {e}")
+            print(f" Erro ao gerar dados simulados: {e}")
             return []
 
     def update_athena_costs_table(self, cost_data):
@@ -4765,7 +4768,7 @@ class AWSApp:
             self.page.update()
 
         except Exception as e:
-            print(f"❌ Erro ao atualizar tabela: {e}")
+            print(f" Erro ao atualizar tabela: {e}")
 
     def generate_athena_charts(self, cost_data, period):
         """Gera gráficos de custos do Athena"""
@@ -4822,7 +4825,7 @@ class AWSApp:
             self.page.update()
 
         except Exception as e:
-            print(f"❌ Erro ao gerar gráficos: {e}")
+            print(f" Erro ao gerar gráficos: {e}")
             self.athena_charts_container.content = ft.Text(
                 f"Erro ao gerar gráficos: {str(e)}",
                 size=16,
@@ -4878,7 +4881,7 @@ class AWSApp:
 
         # Botão de atualização
         self.refresh_button_glue = ft.ElevatedButton(
-            "📊 Gerar Relatório",
+            " Gerar Relatório",
             on_click=self.refresh_glue_costs,
             width=150,
             height=40,
@@ -4890,7 +4893,7 @@ class AWSApp:
 
         # Botão para carregar jobs
         self.load_glue_jobs_button = ft.ElevatedButton(
-            "🔄 Carregar Jobs",
+            " Carregar Jobs",
             on_click=self.load_glue_jobs,
             width=160,
             height=40,
@@ -5048,7 +5051,7 @@ class AWSApp:
     def load_glue_jobs(self, e):
         """Carrega lista de jobs do Glue"""
         try:
-            self.glue_status.value = "🔄 Carregando jobs do Glue..."
+            self.glue_status.value = " Carregando jobs do Glue..."
             self.glue_status.color = ft.Colors.ORANGE
             self.glue_progress.visible = True
             self.page.update()
@@ -5056,7 +5059,7 @@ class AWSApp:
             def load_in_background():
                 try:
                     if not self.current_account_id:
-                        self.glue_status.value = "❌ Necessário estar logado para carregar jobs"
+                        self.glue_status.value = " Necessário estar logado para carregar jobs"
                         self.glue_status.color = ft.Colors.RED
                         return
 
@@ -5072,12 +5075,12 @@ class AWSApp:
 
                     self.glue_job_type_dropdown.options = job_options
 
-                    self.glue_status.value = f"✅ {len(jobs)} jobs carregados com sucesso"
+                    self.glue_status.value = f" {len(jobs)} jobs carregados com sucesso"
                     self.glue_status.color = ft.Colors.GREEN
 
                 except Exception as e:
-                    print(f"❌ Erro ao carregar jobs: {e}")
-                    self.glue_status.value = f"❌ Erro ao carregar jobs: {str(e)}"
+                    print(f" Erro ao carregar jobs: {e}")
+                    self.glue_status.value = f" Erro ao carregar jobs: {str(e)}"
                     self.glue_status.color = ft.Colors.RED
 
                 finally:
@@ -5087,8 +5090,8 @@ class AWSApp:
             threading.Thread(target=load_in_background, daemon=True).start()
 
         except Exception as e:
-            print(f"❌ Erro ao iniciar carregamento: {e}")
-            self.glue_status.value = f"❌ Erro: {str(e)}"
+            print(f" Erro ao iniciar carregamento: {e}")
+            self.glue_status.value = f" Erro: {str(e)}"
             self.glue_status.color = ft.Colors.RED
             self.glue_progress.visible = False
             self.page.update()
@@ -5096,7 +5099,7 @@ class AWSApp:
     def refresh_glue_costs(self, e):
         """Gera relatório de custos do Glue"""
         try:
-            self.glue_status.value = "📊 Gerando relatório de custos..."
+            self.glue_status.value = " Gerando relatório de custos..."
             self.glue_status.color = ft.Colors.ORANGE
             self.glue_progress.visible = True
             self.page.update()
@@ -5109,7 +5112,7 @@ class AWSApp:
 
                     # Exemplo de dados mockados para demonstração
                     self.glue_charts_container.content = ft.Text(
-                        "📊 Relatório de Custos Glue\n\n" +
+                        " Relatório de Custos Glue\n\n" +
                         "🚧 Esta funcionalidade está em desenvolvimento.\n" +
                         "Em breve você poderá visualizar:\n\n" +
                         "• Custos por job\n" +
@@ -5122,8 +5125,8 @@ class AWSApp:
                     )
 
                 except Exception as e:
-                    print(f"❌ Erro ao gerar relatório: {e}")
-                    self.glue_status.value = f"❌ Erro: {str(e)}"
+                    print(f" Erro ao gerar relatório: {e}")
+                    self.glue_status.value = f" Erro: {str(e)}"
                     self.glue_status.color = ft.Colors.RED
 
                 finally:
@@ -5133,8 +5136,8 @@ class AWSApp:
             threading.Thread(target=generate_in_background, daemon=True).start()
 
         except Exception as e:
-            print(f"❌ Erro ao iniciar geração: {e}")
-            self.glue_status.value = f"❌ Erro: {str(e)}"
+            print(f" Erro ao iniciar geração: {e}")
+            self.glue_status.value = f" Erro: {str(e)}"
             self.glue_status.color = ft.Colors.RED
             self.glue_progress.visible = False
             self.page.update()
@@ -5253,7 +5256,7 @@ class AWSApp:
         # Área de comparação melhorada
         self.comparison_result = ft.Container(
             content=ft.Text(
-                "📊 Comparação de Custos\n\nCalcule os custos do Athena e Glue para ver a comparação detalhada aqui.",
+                " Comparação de Custos\n\nCalcule os custos do Athena e Glue para ver a comparação detalhada aqui.",
                 size=15,
                 text_align=ft.TextAlign.CENTER,
                 color=ft.Colors.GREY_400,
@@ -5537,14 +5540,14 @@ class AWSApp:
     def auto_update_simulator_data(self):
         """Atualiza automaticamente cotação e preços AWS ao abrir a aba"""
         try:
-            print("🔄 Iniciando atualizações automáticas do simulador...")
+            print(" Iniciando atualizações automáticas do simulador...")
 
             def update_all_data():
                 try:
                     # Mostrar que está carregando
                     self.simulator_progress.visible = True
-                    self.currency_status.value = "🔄 Atualizando cotação..."
-                    self.aws_pricing_status.value = "🔄 Atualizando preços AWS..."
+                    self.currency_status.value = " Atualizando cotação..."
+                    self.aws_pricing_status.value = " Atualizando preços AWS..."
                     self.page.update()
 
                     # Atualizar cotação USD/BRL
@@ -5555,18 +5558,18 @@ class AWSApp:
                         new_rate = float(data["USDBRL"]["bid"])
                         self.usd_to_brl_rate = new_rate
 
-                        self.currency_status.value = f"✅ USD/BRL: R$ {new_rate:.3f}"
+                        self.currency_status.value = f" USD/BRL: R$ {new_rate:.3f}"
                         self.currency_status.color = ft.Colors.GREEN
-                        print(f"✅ Cotação atualizada: R$ {new_rate:.3f}")
+                        print(f" Cotação atualizada: R$ {new_rate:.3f}")
 
                     except Exception as e:
-                        print(f"⚠️ Erro ao buscar cotação: {e}")
-                        self.currency_status.value = f"⚠️ Cotação padrão: R$ {self.usd_to_brl_rate:.2f}"
+                        print(f" Erro ao buscar cotação: {e}")
+                        self.currency_status.value = f" Cotação padrão: R$ {self.usd_to_brl_rate:.2f}"
                         self.currency_status.color = ft.Colors.ORANGE
 
                     # Buscar preços reais via AWS Pricing API
                     try:
-                        print("🔍 Buscando preços reais via AWS Pricing API...")
+                        print(" Buscando preços reais via AWS Pricing API...")
 
                         # Salvar preços antigos para comparação
                         old_athena_price = self.aws_pricing["athena_per_tb"]
@@ -5595,21 +5598,21 @@ class AWSApp:
                             # Status baseado nas mudanças
                             if abs(athena_change) > 1 or glue_changes > 0:
                                 change_text = f"({athena_change:+.1f}%)" if abs(athena_change) > 1 else ""
-                                self.aws_pricing_status.value = f"🔄 Preços atualizados via API! Athena: ${new_athena:.2f}/TB {change_text}"
+                                self.aws_pricing_status.value = f" Preços atualizados via API! Athena: ${new_athena:.2f}/TB {change_text}"
                                 self.aws_pricing_status.color = ft.Colors.GREEN
-                                print(f"✅ Preços atualizados - Athena: ${old_athena_price:.2f} → ${new_athena:.2f}")
+                                print(f" Preços atualizados - Athena: ${old_athena_price:.2f} → ${new_athena:.2f}")
                             else:
-                                self.aws_pricing_status.value = f"✅ Preços confirmados via API - Athena: ${new_athena:.2f}/TB • Glue: 4 tipos"
+                                self.aws_pricing_status.value = f" Preços confirmados via API - Athena: ${new_athena:.2f}/TB • Glue: 4 tipos"
                                 self.aws_pricing_status.color = ft.Colors.PURPLE
-                                print("✅ Preços confirmados via AWS API")
+                                print(" Preços confirmados via AWS API")
 
                         else:
-                            self.aws_pricing_status.value = "⚠️ API indisponível - Usando preços padrão"
+                            self.aws_pricing_status.value = " API indisponível - Usando preços padrão"
                             self.aws_pricing_status.color = ft.Colors.ORANGE
 
                     except Exception as e:
-                        print(f"⚠️ Erro ao buscar preços via API: {e}")
-                        self.aws_pricing_status.value = f"⚠️ Erro na API - Preços padrão: ${self.aws_pricing['athena_per_tb']:.2f}/TB"
+                        print(f" Erro ao buscar preços via API: {e}")
+                        self.aws_pricing_status.value = f" Erro na API - Preços padrão: ${self.aws_pricing['athena_per_tb']:.2f}/TB"
                         self.aws_pricing_status.color = ft.Colors.ORANGE
 
                     # Recalcular custos se já existem
@@ -5617,10 +5620,10 @@ class AWSApp:
                         self.update_comparison()
 
                 except Exception as e:
-                    print(f"❌ Erro geral na atualização: {e}")
-                    self.currency_status.value = "❌ Erro na atualização"
+                    print(f" Erro geral na atualização: {e}")
+                    self.currency_status.value = " Erro na atualização"
                     self.currency_status.color = ft.Colors.RED
-                    self.aws_pricing_status.value = "❌ Erro na atualização"
+                    self.aws_pricing_status.value = " Erro na atualização"
                     self.aws_pricing_status.color = ft.Colors.RED
 
                 finally:
@@ -5631,7 +5634,7 @@ class AWSApp:
             threading.Thread(target=update_all_data, daemon=True).start()
 
         except Exception as e:
-            print(f"❌ Erro ao iniciar auto-atualização: {e}")
+            print(f" Erro ao iniciar auto-atualização: {e}")
             self.simulator_progress.visible = False
             if hasattr(self, 'page'):
                 self.page.update()
@@ -5639,7 +5642,7 @@ class AWSApp:
     def fetch_aws_pricing_api(self):
         """Busca preços reais do AWS Athena e Glue via AWS Pricing API"""
         try:
-            print("🔍 Buscando preços via AWS Pricing API...")
+            print(" Buscando preços via AWS Pricing API...")
             import boto3
             import json
 
@@ -5651,7 +5654,7 @@ class AWSApp:
 
             def fetch_athena_pricing():
                 try:
-                    print("🔍 Buscando preços do Athena via AWS Pricing API...")
+                    print(" Buscando preços do Athena via AWS Pricing API...")
 
                     # Tentar diferentes combinações de filtros para Athena
                     filter_combinations = [
@@ -5673,14 +5676,14 @@ class AWSApp:
 
                     for i, filters in enumerate(filter_combinations):
                         try:
-                            print(f"🔍 Tentativa {i+1}/3 para buscar preços Athena...")
+                            print(f" Tentativa {i+1}/3 para buscar preços Athena...")
                             response = pricing_client.get_products(
                                 ServiceCode='AmazonAthena',
                                 Filters=filters,
                                 MaxResults=20
                             )
 
-                            print(f"📊 API retornou {len(response['PriceList'])} produtos")
+                            print(f" API retornou {len(response['PriceList'])} produtos")
 
                             for price_item in response['PriceList']:
                                 product = json.loads(price_item)
@@ -5688,7 +5691,7 @@ class AWSApp:
                                 # Debug: mostrar estrutura do produto
                                 if i == 0:  # Só na primeira tentativa para não poluir logs
                                     attributes = product.get('product', {}).get('attributes', {})
-                                    print(f"🔍 Produto encontrado: {attributes.get('usageType', 'N/A')}")
+                                    print(f" Produto encontrado: {attributes.get('usageType', 'N/A')}")
 
                                 # Extrair preço do JSON complexo
                                 if 'terms' in product:
@@ -5707,28 +5710,28 @@ class AWSApp:
                                                 if 'per GB' in description or 'DataScanned' in description:
                                                     # Converter GB para TB (1 TB = 1024 GB)
                                                     price_per_tb = price_value * 1024
-                                                    print(f"✅ Athena: ${price_per_tb:.2f} por TB (${price_value:.4f} por GB)")
+                                                    print(f" Athena: ${price_per_tb:.2f} por TB (${price_value:.4f} por GB)")
                                                     return price_per_tb
                                                 elif 'per TB' in description:
-                                                    print(f"✅ Athena: ${price_value:.2f} por TB (direto)")
+                                                    print(f" Athena: ${price_value:.2f} por TB (direto)")
                                                     return price_value
 
                         except Exception as e:
-                            print(f"⚠️ Erro na tentativa {i+1}: {e}")
+                            print(f" Erro na tentativa {i+1}: {e}")
                             continue
 
                     # Se não encontrou via API, usar preço estimado baseado na documentação AWS
-                    print("⚠️ Não foi possível obter preço via API, usando preço estimado da documentação")
+                    print(" Não foi possível obter preço via API, usando preço estimado da documentação")
                     # Preço baseado na documentação oficial AWS para sa-east-1 (≈ $5.00/TB)
                     return 5.00
 
                 except Exception as e:
-                    print(f"❌ Erro geral ao buscar preços Athena: {e}")
+                    print(f" Erro geral ao buscar preços Athena: {e}")
                     return 5.00  # Fallback
 
             def fetch_glue_pricing():
                 try:
-                    print("🔍 Buscando preços do Glue via AWS Pricing API...")
+                    print(" Buscando preços do Glue via AWS Pricing API...")
 
                     # Preços padrão baseados na documentação AWS
                     glue_prices = {
@@ -5758,14 +5761,14 @@ class AWSApp:
 
                     for i, filters in enumerate(filter_combinations):
                         try:
-                            print(f"🔍 Tentativa {i+1}/3 para buscar preços Glue...")
+                            print(f" Tentativa {i+1}/3 para buscar preços Glue...")
                             response = pricing_client.get_products(
                                 ServiceCode='AWSGlue',
                                 Filters=filters,
                                 MaxResults=30
                             )
 
-                            print(f"📊 API retornou {len(response['PriceList'])} produtos")
+                            print(f" API retornou {len(response['PriceList'])} produtos")
 
                             # Processar resposta da API
                             for price_item in response['PriceList']:
@@ -5778,7 +5781,7 @@ class AWSApp:
 
                                 # Debug: mostrar o que foi encontrado
                                 if i == 0:  # Só na primeira tentativa
-                                    print(f"🔍 Produto Glue: {instance_type} | {usage_type}")
+                                    print(f" Produto Glue: {instance_type} | {usage_type}")
 
                                 # Extrair preço
                                 if 'terms' in product:
@@ -5798,30 +5801,30 @@ class AWSApp:
                                                     # Mapear tipos de instância
                                                     if 'G.025X' in instance_type or '0.25' in description:
                                                         glue_prices["G.025X"] = price_value
-                                                        print(f"✅ G.025X: ${price_value:.4f} por DPU-hora")
+                                                        print(f" G.025X: ${price_value:.4f} por DPU-hora")
                                                     elif 'G.1X' in instance_type or 'G.1X' in description:
                                                         glue_prices["G.1X"] = price_value
                                                         glue_prices["Standard"] = price_value  # Standard = G.1X
-                                                        print(f"✅ G.1X/Standard: ${price_value:.4f} por DPU-hora")
+                                                        print(f" G.1X/Standard: ${price_value:.4f} por DPU-hora")
                                                     elif 'G.2X' in instance_type or 'G.2X' in description:
                                                         glue_prices["G.2X"] = price_value
-                                                        print(f"✅ G.2X: ${price_value:.4f} por DPU-hora")
+                                                        print(f" G.2X: ${price_value:.4f} por DPU-hora")
 
                             # Se encontrou pelo menos um preço, considerar sucesso
                             if any(price != fallback for price, fallback in
                                    zip(glue_prices.values(), [0.11, 0.44, 0.88, 0.44])):
-                                print(f"✅ Alguns preços Glue atualizados via API")
+                                print(f" Alguns preços Glue atualizados via API")
                                 break
 
                         except Exception as e:
-                            print(f"⚠️ Erro na tentativa {i+1} para Glue: {e}")
+                            print(f" Erro na tentativa {i+1} para Glue: {e}")
                             continue
 
-                    print(f"✅ Glue preços finais: G.025X=${glue_prices['G.025X']:.4f}, G.1X=${glue_prices['G.1X']:.4f}, G.2X=${glue_prices['G.2X']:.4f}")
+                    print(f" Glue preços finais: G.025X=${glue_prices['G.025X']:.4f}, G.1X=${glue_prices['G.1X']:.4f}, G.2X=${glue_prices['G.2X']:.4f}")
                     return glue_prices
 
                 except Exception as e:
-                    print(f"❌ Erro geral ao buscar preços Glue: {e}")
+                    print(f" Erro geral ao buscar preços Glue: {e}")
                     return {
                         "G.025X": 0.11,
                         "G.1X": 0.44,
@@ -5844,7 +5847,7 @@ class AWSApp:
             }
 
         except Exception as e:
-            print(f"❌ Erro geral na AWS Pricing API: {e}")
+            print(f" Erro geral na AWS Pricing API: {e}")
             # Retornar preços de fallback
             return {
                 "athena_per_tb": 5.00,
@@ -5871,7 +5874,7 @@ class AWSApp:
             self.athena_cost_result.value = (
                 f"💵 USD: ${cost_usd:.2f}\n"
                 f"💰 BRL: R$ {cost_brl:.2f}\n"
-                f"📊 Dados: {data_tb} TB\n"
+                f" Dados: {data_tb} TB\n"
                 f"💲 Preço/TB: ${self.aws_pricing['athena_per_tb']:.2f}"
             )
             self.athena_cost_result.color = ft.Colors.GREEN
@@ -5880,7 +5883,7 @@ class AWSApp:
             self.page.update()
 
         except ValueError:
-            self.athena_cost_result.value = "❌ Erro: Insira um valor numérico válido"
+            self.athena_cost_result.value = " Erro: Insira um valor numérico válido"
             self.athena_cost_result.color = ft.Colors.RED
             self.page.update()
 
@@ -5915,7 +5918,7 @@ class AWSApp:
                 f"💰 BRL: R$ {cost_brl:.2f}\n"
                 f"⚙️ {machine_type}: {dpu_count} DPUs\n"
                 f"⏱️ Tempo: {execution_time_minutes}min ({execution_hours:.2f}h)\n"
-                f"📊 DPU-Horas: {total_dpu_hours:.2f}\n"
+                f" DPU-Horas: {total_dpu_hours:.2f}\n"
                 f"💲 Preço/DPU-h: ${price_per_dpu_hour:.2f}"
             )
             self.glue_cost_result.color = ft.Colors.GREEN
@@ -5924,7 +5927,7 @@ class AWSApp:
             self.page.update()
 
         except (ValueError, KeyError):
-            self.glue_cost_result.value = "❌ Erro: Verifique os valores inseridos"
+            self.glue_cost_result.value = " Erro: Verifique os valores inseridos"
             self.glue_cost_result.color = ft.Colors.RED
             self.page.update()
 
@@ -5934,10 +5937,10 @@ class AWSApp:
             athena_brl = self.athena_last_cost_usd * self.usd_to_brl_rate
             glue_brl = self.glue_last_cost_usd * self.usd_to_brl_rate
 
-            comparison_text = "📊 Análise Comparativa Detalhada\n\n"
+            comparison_text = " Análise Comparativa Detalhada\n\n"
 
             if self.athena_last_cost_usd > 0:
-                comparison_text += f"🔍 Amazon Athena:\n"
+                comparison_text += f" Amazon Athena:\n"
                 comparison_text += f"   💵 ${self.athena_last_cost_usd:.2f} USD\n"
                 comparison_text += f"   💰 R$ {athena_brl:.2f} BRL\n\n"
 
@@ -5953,16 +5956,16 @@ class AWSApp:
                     difference = self.glue_last_cost_usd - self.athena_last_cost_usd
                     difference_brl = difference * self.usd_to_brl_rate
                     percentage = (difference / self.glue_last_cost_usd) * 100
-                    comparison_text += f"✅ Athena é mais econômico!\n"
+                    comparison_text += f" Athena é mais econômico!\n"
                     comparison_text += f"💰 Economia: ${difference:.2f} USD (R$ {difference_brl:.2f})\n"
-                    comparison_text += f"📊 Percentual: {percentage:.1f}% mais barato"
+                    comparison_text += f" Percentual: {percentage:.1f}% mais barato"
                 elif self.glue_last_cost_usd < self.athena_last_cost_usd:
                     difference = self.athena_last_cost_usd - self.glue_last_cost_usd
                     difference_brl = difference * self.usd_to_brl_rate
                     percentage = (difference / self.athena_last_cost_usd) * 100
-                    comparison_text += f"✅ Glue é mais econômico!\n"
+                    comparison_text += f" Glue é mais econômico!\n"
                     comparison_text += f"💰 Economia: ${difference:.2f} USD (R$ {difference_brl:.2f})\n"
-                    comparison_text += f"📊 Percentual: {percentage:.1f}% mais barato"
+                    comparison_text += f" Percentual: {percentage:.1f}% mais barato"
                 else:
                     comparison_text += "⚖️ Custos praticamente equivalentes\n"
                     comparison_text += "🤝 Ambas as opções têm custo similar"
@@ -5982,10 +5985,10 @@ class AWSApp:
         """Busca todas as regras do EventBridge usando boto3."""
         try:
             if not self.current_account_id:
-                print("❌ Necessário estar logado para buscar regras EventBridge")
+                print(" Necessário estar logado para buscar regras EventBridge")
                 return []
 
-            print("🔍 Buscando regras do EventBridge...")
+            print(" Buscando regras do EventBridge...")
 
             # Usar retry para evitar throttling
             def get_eventbridge_rules():
@@ -6004,15 +6007,15 @@ class AWSApp:
             rules = self.retry_with_backoff(get_eventbridge_rules, max_retries=3, base_delay=1.0)
 
             if not rules:
-                print("📋 Nenhuma regra EventBridge encontrada")
+                print(" Nenhuma regra EventBridge encontrada")
                 return []
 
-            print(f"📊 {len(rules)} regras EventBridge encontradas")
+            print(f" {len(rules)} regras EventBridge encontradas")
 
             # Processar regras em paralelo para obter detalhes
             rules_metadata = []
             max_workers = min(3, max(2, len(rules) // 10))  # Reduzido para evitar throttling
-            print(f"🔧 Usando {max_workers} workers para processar regras")
+            print(f" Usando {max_workers} workers para processar regras")
 
             start_time = time.time()
 
@@ -6042,7 +6045,7 @@ class AWSApp:
 
                     except Exception as e:
                         rule_name = future_to_rule[future]
-                        print(f"❌ Erro ao processar regra {rule_name}: {e}")
+                        print(f" Erro ao processar regra {rule_name}: {e}")
                         # Adicionar entrada com erro
                         rules_metadata.append({
                             'name': rule_name,
@@ -6054,12 +6057,12 @@ class AWSApp:
 
             end_time = time.time()
             duration = end_time - start_time
-            print(f"⚡ Regras EventBridge processadas em {duration:.2f}s com {max_workers} workers")
+            print(f" Regras EventBridge processadas em {duration:.2f}s com {max_workers} workers")
 
             return rules_metadata
 
         except Exception as e:
-            print(f"❌ Erro geral ao buscar regras EventBridge: {e}")
+            print(f" Erro geral ao buscar regras EventBridge: {e}")
             return []
 
     def fetch_single_rule_details(self, rule):
@@ -6088,7 +6091,7 @@ class AWSApp:
             }
 
         except Exception as e:
-            print(f"❌ Erro ao buscar detalhes da regra {rule.get('Name', 'UNKNOWN')}: {e}")
+            print(f" Erro ao buscar detalhes da regra {rule.get('Name', 'UNKNOWN')}: {e}")
             return {
                 'name': rule.get('Name', 'UNKNOWN'),
                 'state': "ERROR",
@@ -6120,11 +6123,11 @@ class AWSApp:
                 new_state = "ENABLED"
                 action = "habilitada"
 
-            print(f"✅ Regra '{rule_name}' {action} com sucesso")
+            print(f" Regra '{rule_name}' {action} com sucesso")
             return new_state
 
         except Exception as e:
-            print(f"❌ Erro ao alterar estado da regra {rule_name}: {e}")
+            print(f" Erro ao alterar estado da regra {rule_name}: {e}")
             return current_state  # Retorna estado original em caso de erro
 
     def update_eventbridge_table(self, rules_data=None):
@@ -6177,13 +6180,13 @@ class AWSApp:
                     break
 
             if not current_rule:
-                print(f"❌ Regra {rule_name} não encontrada")
+                print(f" Regra {rule_name} não encontrada")
                 return
 
             current_state = current_rule.get("state", "UNKNOWN")
 
             # Mostrar status de carregamento
-            self.monitoring_status_eventbridge.value = f"🔄 Alterando estado da regra '{rule_name}'..."
+            self.monitoring_status_eventbridge.value = f" Alterando estado da regra '{rule_name}'..."
             self.monitoring_status_eventbridge.color = ft.Colors.ORANGE
             self.page.update()
 
@@ -6201,7 +6204,7 @@ class AWSApp:
 
                         # Atualizar status
                         action = "habilitada" if new_state == "ENABLED" else "desabilitada"
-                        self.monitoring_status_eventbridge.value = f"✅ Regra '{rule_name}' {action} com sucesso"
+                        self.monitoring_status_eventbridge.value = f" Regra '{rule_name}' {action} com sucesso"
                         self.monitoring_status_eventbridge.color = ft.Colors.GREEN
                         self.page.update()
 
@@ -6209,7 +6212,7 @@ class AWSApp:
                         def reset_status():
                             time.sleep(3)
                             total_rules = len(getattr(self, "all_eventbridge_rules", []))
-                            self.monitoring_status_eventbridge.value = f"✅ {total_rules} regras EventBridge encontradas"
+                            self.monitoring_status_eventbridge.value = f" {total_rules} regras EventBridge encontradas"
                             self.monitoring_status_eventbridge.color = ft.Colors.GREEN
                             self.page.update()
 
@@ -6219,7 +6222,7 @@ class AWSApp:
 
                 except Exception as e:
                     def update_ui_error():
-                        self.monitoring_status_eventbridge.value = f"❌ Erro ao alterar regra: {str(e)}"
+                        self.monitoring_status_eventbridge.value = f" Erro ao alterar regra: {str(e)}"
                         self.monitoring_status_eventbridge.color = ft.Colors.RED
                         # Reverter o switch
                         e.control.value = current_state == "ENABLED"
@@ -6230,7 +6233,7 @@ class AWSApp:
             threading.Thread(target=toggle_in_background, daemon=True).start()
 
         except Exception as e:
-            self.monitoring_status_eventbridge.value = f"❌ Erro: {str(e)}"
+            self.monitoring_status_eventbridge.value = f" Erro: {str(e)}"
             self.monitoring_status_eventbridge.color = ft.Colors.RED
             self.page.update()
 
@@ -6260,7 +6263,7 @@ class AWSApp:
                     # Salvar no cache
                     self.save_eventbridge_cache(rules)
 
-                    self.monitoring_status_eventbridge.value = f"✅ {len(rules)} regras EventBridge encontradas"
+                    self.monitoring_status_eventbridge.value = f" {len(rules)} regras EventBridge encontradas"
                     self.monitoring_status_eventbridge.color = ft.Colors.GREEN
                     self.monitoring_progress_eventbridge.visible = False
                     self.refresh_button_eventbridge.disabled = False
@@ -6271,7 +6274,7 @@ class AWSApp:
 
             except Exception as e:
                 def update_ui_error():
-                    self.monitoring_status_eventbridge.value = f"❌ Erro ao carregar regras: {str(e)}"
+                    self.monitoring_status_eventbridge.value = f" Erro ao carregar regras: {str(e)}"
                     self.monitoring_status_eventbridge.color = ft.Colors.RED
                     self.monitoring_progress_eventbridge.visible = False
                     self.refresh_button_eventbridge.disabled = False
@@ -6329,21 +6332,21 @@ class AWSApp:
             pyperclip.copy(clipboard_text)
 
             # Feedback visual
-            self.monitoring_status_eventbridge.value = "✅ Dados copiados para clipboard"
+            self.monitoring_status_eventbridge.value = " Dados copiados para clipboard"
             self.monitoring_status_eventbridge.color = ft.Colors.GREEN
             self.page.update()
 
             # Reset status após 3 segundos
             def reset_status():
                 time.sleep(3)
-                self.monitoring_status_eventbridge.value = f"✅ {len(data)} regras EventBridge encontradas"
+                self.monitoring_status_eventbridge.value = f" {len(data)} regras EventBridge encontradas"
                 self.monitoring_status_eventbridge.color = ft.Colors.GREEN
                 self.page.update()
 
             threading.Thread(target=reset_status, daemon=True).start()
 
         except Exception as e:
-            self.monitoring_status_eventbridge.value = f"❌ Erro ao copiar: {str(e)}"
+            self.monitoring_status_eventbridge.value = f" Erro ao copiar: {str(e)}"
             self.monitoring_status_eventbridge.color = ft.Colors.RED
             self.page.update()
 
@@ -6354,7 +6357,7 @@ class AWSApp:
                 return
 
             # Mostrar status de escolha de pasta
-            self.monitoring_status_eventbridge.value = "📁 Escolha onde salvar o arquivo..."
+            self.monitoring_status_eventbridge.value = " Escolha onde salvar o arquivo..."
             self.monitoring_status_eventbridge.color = ft.Colors.BLUE
             self.page.update()
 
@@ -6370,7 +6373,7 @@ class AWSApp:
             self.select_export_folder(self._export_eventbridge_after_folder_selection)
 
         except Exception as e:
-            self.monitoring_status_eventbridge.value = f"❌ Erro ao preparar export: {str(e)}"
+            self.monitoring_status_eventbridge.value = f" Erro ao preparar export: {str(e)}"
             self.monitoring_status_eventbridge.color = ft.Colors.RED
             self.page.update()
 
@@ -6391,21 +6394,21 @@ class AWSApp:
             df.to_excel(file_path, index=False, engine='openpyxl')
 
             # Feedback visual
-            self.monitoring_status_eventbridge.value = f"✅ Exportado para {file_path.parent.name}/{filename}"
+            self.monitoring_status_eventbridge.value = f" Exportado para {file_path.parent.name}/{filename}"
             self.monitoring_status_eventbridge.color = ft.Colors.GREEN
             self.page.update()
 
             # Reset status após 5 segundos
             def reset_status():
                 time.sleep(5)
-                self.monitoring_status_eventbridge.value = f"✅ {len(self.export_data_eventbridge)} regras EventBridge encontradas"
+                self.monitoring_status_eventbridge.value = f" {len(self.export_data_eventbridge)} regras EventBridge encontradas"
                 self.monitoring_status_eventbridge.color = ft.Colors.GREEN
                 self.page.update()
 
             threading.Thread(target=reset_status, daemon=True).start()
 
         except Exception as e:
-            self.monitoring_status_eventbridge.value = f"❌ Erro ao exportar: {str(e)}"
+            self.monitoring_status_eventbridge.value = f" Erro ao exportar: {str(e)}"
             self.monitoring_status_eventbridge.color = ft.Colors.RED
             self.page.update()
 

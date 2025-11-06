@@ -1,0 +1,80 @@
+name: Auto Pull Request
+
+on:
+  push:
+    branches-ignore:
+      - main
+      - master
+      - develop
+      - dev
+
+permissions:
+  contents: read
+  pull-requests: write
+
+jobs:
+  auto-pr:
+    runs-on: ubuntu-latest
+    if: ${{ !contains(github.event.head_commit.message, 'Merge pull request') }}
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Get branch info
+        id: info
+        run: |
+          echo "branch=${{ github.ref_name }}" >> $GITHUB_OUTPUT
+          if git show-ref --verify --quiet refs/remotes/origin/main; then
+            echo "base=main" >> $GITHUB_OUTPUT
+          else
+            echo "base=master" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Check existing PR
+        id: check
+        run: |
+          EXISTING=$(gh pr list --head "${{ steps.info.outputs.branch }}" --base "${{ steps.info.outputs.base }}" --json number --jq '.[0].number // empty')
+          if [ -n "$EXISTING" ]; then
+            echo "exists=true" >> $GITHUB_OUTPUT
+            echo "number=$EXISTING" >> $GITHUB_OUTPUT
+          else
+            echo "exists=false" >> $GITHUB_OUTPUT
+          fi
+        env:
+          GH_TOKEN: ${{ github.token }}
+
+      - name: Create PR
+        if: steps.check.outputs.exists == 'false'
+        run: |
+          BRANCH="${{ steps.info.outputs.branch }}"
+          BASE="${{ steps.info.outputs.base }}"
+
+          # Generate title based on branch
+          if echo "$BRANCH" | grep -q "feature/"; then
+            TITLE="✨ $(echo $BRANCH | sed 's/feature\///' | sed 's/-/ /g')"
+          elif echo "$BRANCH" | grep -q "fix/"; then
+            TITLE="🐛 $(echo $BRANCH | sed 's/fix\///' | sed 's/-/ /g')"
+          elif echo "$BRANCH" | grep -q "docs/"; then
+            TITLE="📝 $(echo $BRANCH | sed 's/docs\///' | sed 's/-/ /g')"
+          else
+            TITLE="${{ github.event.head_commit.message }}"
+          fi
+
+          # Create PR with simple description
+          gh pr create \
+            --title "$TITLE" \
+            --body "Automated PR from $BRANCH to $BASE. Created by GitHub Actions." \
+            --base "$BASE" \
+            --head "$BRANCH"
+        env:
+          GH_TOKEN: ${{ github.token }}
+
+      - name: Comment on existing PR
+        if: steps.check.outputs.exists == 'true'
+        run: |
+          gh pr comment "${{ steps.check.outputs.number }}" \
+            --body "New push detected. Latest commit: ${{ github.event.head_commit.message }}"
+        env:
+          GH_TOKEN: ${{ github.token }}

@@ -1,0 +1,129 @@
+# Configuração para Auto Pull Request Workflow
+# Este arquivo é opcional e permite personalizar o comportamento do workflow
+
+# Configurações de branches
+branches:
+  # Branches que devem ser ignorados (não criar PR)
+  ignore:
+    - main
+    - master
+    - develop
+    - dev
+    - production
+    - staging
+
+  # Branch padrão para criar PRs (se não especificado, usa main ou master)
+  default_target: main
+
+# Configurações de labels
+labels:
+  # Labels padrão a serem adicionados em todos os PRs automáticos
+  default:
+    - auto-pr
+    - needs-review
+
+  # Labels baseados no padrão do nome do branch
+  patterns:
+    feature: ["enhancement", "feature"]
+    feat: ["enhancement", "feature"]
+    fix: ["bug", "fix"]
+    bugfix: ["bug", "fix"]
+    hotfix: ["bug", "hotfix", "priority"]
+    refactor: ["refactoring", "maintenance"]
+    refact: ["refactoring", "maintenance"]
+    docs: ["documentation"]
+    doc: ["documentation"]
+    test: ["tests", "qa"]
+    tests: ["tests", "qa"]
+    chore: ["maintenance", "chore"]
+    style: ["style", "formatting"]
+
+# Configurações de PR
+pull_request:
+  # Template de título (disponível: {branch}, {commit_message}, {author})
+  title_template: "{commit_message}"
+
+  # Template personalizado de descrição
+  description_template: |
+    ## 🚀 Automated Pull Request
+
+    **Branch:** `{branch}` → `{base_branch}`
+    **Author:** {author}
+    **Commits:** {commit_count}
+
+    ### 📝 Latest Commit Message
+    ```
+    {commit_message}
+    ```
+
+    ### 📋 Changes Summary
+    - Commits since {base_branch}: **{commit_count}**
+    - Branch: `{branch}`
+    - Created automatically by GitHub Actions
+
+    ### ✅ Checklist
+    - [ ] Code reviewed
+    - [ ] Tests passing
+    - [ ] Documentation updated
+    - [ ] Ready to merge
+
+    ---
+    *This PR was created automatically when push was made to `{branch}` branch*
+
+  # Adicionar comentário em PRs existentes quando há novo push
+  comment_on_update: true
+
+  # Template de comentário para PRs existentes
+  update_comment_template: |
+    🔄 **New push detected on branch `{branch}`**
+
+    **Latest commit:**
+    ```
+    {commit_message}
+    ```
+
+    *Comment added automatically by GitHub Actions*
+
+# Configurações de notificação
+notifications:
+  # Mencionar revisores automaticamente (opcional)
+  auto_mention_reviewers: false
+
+  # Lista de usuários para mencionar em PRs específicos
+  default_reviewers: []
+    # - username1
+    # - username2
+
+  # Mencionar autor do commit original
+  mention_commit_author: false
+
+# Configurações de validação
+validation:
+  # Verificar se há conflitos antes de criar PR
+  check_conflicts: true
+
+  # Verificar se há commits desde o branch base
+  require_commits: true
+
+  # Número mínimo de commits para criar PR
+  min_commits: 1
+
+  # Tamanho máximo do branch name
+  max_branch_name_length: 100
+
+# Configurações avançadas
+advanced:
+  # Usar draft PR por padrão
+  create_as_draft: false
+
+  # Fechar PRs automaticamente se branch for deletado
+  auto_close_on_branch_delete: true
+
+  # Converter para draft se houver conflitos
+  draft_on_conflicts: false
+
+  # Adicionar milestone automaticamente (se especificado)
+  auto_milestone: ""
+
+  # Adicionar assignee automaticamente
+  auto_assign_author: false
